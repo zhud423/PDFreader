@@ -2,7 +2,7 @@ export interface RemoteLibraryBookEntry {
   id: string;
   title: string;
   fileName: string;
-  canonicalKey: string;
+  contentHash: string;
   fileSize: number;
   mimeType: string;
   pageCount: number;
@@ -55,7 +55,7 @@ function parseBookEntry(value: unknown, index: number): RemoteLibraryBookEntry {
     id: readRequiredString(value, 'id', prefix),
     title: readRequiredString(value, 'title', prefix),
     fileName: readRequiredString(value, 'fileName', prefix),
-    canonicalKey: readRequiredString(value, 'canonicalKey', prefix),
+    contentHash: readRequiredString(value, 'contentHash', prefix),
     fileSize: readRequiredNumber(value, 'fileSize', prefix),
     mimeType: readRequiredString(value, 'mimeType', prefix),
     pageCount: readRequiredNumber(value, 'pageCount', prefix),

@@ -14,6 +14,7 @@
 - `08_project_bootstrap_and_task_breakdown.md`：当前工程骨架与后续开发拆分
 - `09_p1_verification_log.md`：P1 本机验证结果与真机待验项目
 - `10_p2_beta_runbook.md`：P2 公开测试版的环境要求、回归路径与已知限制
+- `11_p3_library_design.md`：P3 书库首页、上传页与阅读页菜单重构设计
 
 后续建议追加的文档：
 

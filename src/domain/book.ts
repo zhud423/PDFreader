@@ -3,7 +3,8 @@ import type { ProgressRecord } from './progress';
 
 export interface BookRecord {
   bookId: string;
-  canonicalKey: string;
+  titleId: string;
+  contentHash: string;
   sourceType: SourceType;
   sourceInstanceId: string;
   sourceKey: string;
@@ -36,4 +37,3 @@ export interface CoverCacheRecord {
 export interface BookWithProgress extends BookRecord {
   progress: ProgressRecord | null;
 }
-

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import type { BookWithProgress } from '../domain/book';
 import type { ProgressRecord } from '../domain/progress';
+import { CoverImage } from '../components/CoverImage';
 import { subscribePageLifecycle } from '../lib/platform/pageLifecycle';
 import { getDocument, type PDFDocumentProxy } from '../lib/pdf/pdf';
 import {
@@ -18,6 +20,8 @@ import {
 } from '../lib/reader/segmentPlanner';
 import { StatusBadge } from '../components/StatusBadge';
 import { libraryService, type ReaderSession } from '../services/libraryService';
+import { subscribeLibraryChanged } from '../services/libraryEvents';
+import { formatProgressSummary } from '../shared/utils/format';
 
 interface RenderReport {
   segmentId: string;
@@ -25,13 +29,54 @@ interface RenderReport {
   qualityScale: number;
 }
 
-const TAP_STEP_RATIO = 0.9;
 const TAP_ZONE_RATIO = 1 / 3;
+const READER_SETTINGS_STORAGE_KEY = 'pdfreader:reader-settings';
+
+interface ReaderSettings {
+  tapStepEnabled: boolean;
+  tapStepRatio: number;
+  showPageSeparators: boolean;
+}
+
+function loadReaderSettings(): ReaderSettings {
+  if (typeof window === 'undefined') {
+    return {
+      tapStepEnabled: true,
+      tapStepRatio: 0.9,
+      showPageSeparators: true
+    };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(READER_SETTINGS_STORAGE_KEY);
+    if (!raw) {
+      return {
+        tapStepEnabled: true,
+        tapStepRatio: 0.9,
+        showPageSeparators: true
+      };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<ReaderSettings>;
+    return {
+      tapStepEnabled: parsed.tapStepEnabled ?? true,
+      tapStepRatio: parsed.tapStepRatio ?? 0.9,
+      showPageSeparators: parsed.showPageSeparators ?? true
+    };
+  } catch {
+    return {
+      tapStepEnabled: true,
+      tapStepRatio: 0.9,
+      showPageSeparators: true
+    };
+  }
+}
 
 interface RenderedSegmentProps {
   pdf: PDFDocumentProxy;
   segment: ReaderSegment;
   renderMode: ReaderSegmentRenderMode;
+  showPageSeparators: boolean;
   reportRenderedRef: MutableRefObject<(report: RenderReport) => void>;
 }
 
@@ -57,6 +102,7 @@ function RenderedSegment({
   pdf,
   segment,
   renderMode,
+  showPageSeparators,
   reportRenderedRef
 }: RenderedSegmentProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -190,7 +236,7 @@ function RenderedSegment({
 
   return (
     <section
-      className={`reader-segment-shell ${segment.pageNumber > 1 && segment.segmentIndex === 0 ? 'is-page-start' : ''}`}
+      className={`reader-segment-shell ${showPageSeparators && segment.pageNumber > 1 && segment.segmentIndex === 0 ? 'is-page-start' : ''}`}
       style={{ height: `${segment.height + segment.gapBefore}px`, paddingTop: `${segment.gapBefore}px` }}
     >
       <div className="reader-segment-frame" style={{ width: `${segment.width}px`, height: `${segment.height}px` }}>
@@ -208,8 +254,16 @@ interface ReaderViewportProps {
   session: ReaderSession;
   chromeVisible: boolean;
   zoomScale: number;
+  settings: ReaderSettings;
   onToggleChrome: () => void;
-  onZoomChange: (next: number) => void;
+  onSettingsChange: (patch: Partial<ReaderSettings>) => void;
+  onOpenMore: () => void;
+  onOpenChapterList: () => void;
+  onOpenPrevChapter: () => void;
+  onOpenNextChapter: () => void;
+  hasPrevChapter: boolean;
+  hasNextChapter: boolean;
+  isChapterSwitching: boolean;
 }
 
 function createRestoreWindow(layout: ReaderLayout, segment: ReaderSegment): ReaderRenderWindow {
@@ -230,12 +284,57 @@ function createRestoreWindow(layout: ReaderLayout, segment: ReaderSegment): Read
   };
 }
 
+interface DuplicateChapterHint {
+  matchedChapterName: string;
+  matchedFileName: string;
+}
+
+function buildDuplicateChapterHintMap(chapters: BookWithProgress[]): Map<string, DuplicateChapterHint> {
+  const hintMap = new Map<string, DuplicateChapterHint>();
+  const grouped = new Map<string, BookWithProgress[]>();
+
+  for (const chapter of chapters) {
+    const group = grouped.get(chapter.contentHash);
+    if (group) {
+      group.push(chapter);
+    } else {
+      grouped.set(chapter.contentHash, [chapter]);
+    }
+  }
+
+  for (const group of grouped.values()) {
+    if (group.length <= 1) {
+      continue;
+    }
+
+    const sorted = [...group].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const anchor = sorted[0];
+
+    for (let index = 1; index < sorted.length; index += 1) {
+      hintMap.set(sorted[index].bookId, {
+        matchedChapterName: anchor.displayTitle,
+        matchedFileName: anchor.fileName
+      });
+    }
+  }
+
+  return hintMap;
+}
+
 function ReaderViewport({
   session,
   chromeVisible,
   zoomScale,
+  settings,
   onToggleChrome,
-  onZoomChange
+  onSettingsChange,
+  onOpenMore,
+  onOpenChapterList,
+  onOpenPrevChapter,
+  onOpenNextChapter,
+  hasPrevChapter,
+  hasNextChapter,
+  isChapterSwitching
 }: ReaderViewportProps) {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -261,6 +360,7 @@ function ReaderViewport({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadDurationMs, setLoadDurationMs] = useState<number | null>(null);
   const [lastRenderMetric, setLastRenderMetric] = useState<{ durationMs: number; qualityScale: number } | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   reportRenderedRef.current = (report) => {
     if (!renderedSegmentsRef.current.has(report.segmentId)) {
@@ -273,6 +373,10 @@ function ReaderViewport({
       qualityScale: report.qualityScale
     });
   };
+
+  useEffect(() => {
+    lastProgressRef.current = session.progress;
+  }, [session.book.bookId, session.progress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -410,7 +514,35 @@ function ReaderViewport({
     };
   }, [layout, session.book.bookId, session.progress, viewportSnapshot.height, viewportSnapshot.width, zoomScale]);
 
+  const captureProgressFromViewport = () => {
+    const container = containerRef.current;
+    if (!container || !layout) {
+      return;
+    }
+
+    const scrollTop = container.scrollTop;
+    const activeSegment = findSegmentForScroll(layout, scrollTop);
+    if (!activeSegment) {
+      return;
+    }
+
+    lastScrollTopRef.current = scrollTop;
+    lastProgressRef.current = {
+      bookId: session.book.bookId,
+      pageIndex: activeSegment.pageIndex,
+      segmentIndex: activeSegment.segmentIndex,
+      scrollOffsetWithinSegment: Math.max(0, scrollTop - activeSegment.top),
+      zoomScale,
+      viewportWidth: container.clientWidth,
+      viewportHeight: container.clientHeight,
+      restoreStrategyVersion: 2,
+      updatedAt: new Date().toISOString()
+    };
+  };
+
   const flushProgress = async () => {
+    captureProgressFromViewport();
+
     if (!lastProgressRef.current) {
       return;
     }
@@ -450,17 +582,7 @@ function ReaderViewport({
 
       setCurrentPage(activeSegment.pageNumber);
       setCurrentSegment(activeSegment.segmentIndex + 1);
-      lastProgressRef.current = {
-        bookId: session.book.bookId,
-        pageIndex: activeSegment.pageIndex,
-        segmentIndex: activeSegment.segmentIndex,
-        scrollOffsetWithinSegment: Math.max(0, scrollTop - activeSegment.top),
-        zoomScale,
-        viewportWidth: container.clientWidth,
-        viewportHeight: container.clientHeight,
-        restoreStrategyVersion: 2,
-        updatedAt: new Date().toISOString()
-      };
+      captureProgressFromViewport();
 
       if (saveTimerRef.current) {
         window.clearTimeout(saveTimerRef.current);
@@ -626,10 +748,16 @@ function ReaderViewport({
     const offsetY = event.clientY - rect.top;
     const topZoneMax = rect.height * TAP_ZONE_RATIO;
     const bottomZoneMin = rect.height * (1 - TAP_ZONE_RATIO);
+    const stepDistance = Math.max(180, Math.round(rect.height * settings.tapStepRatio));
+
+    if (!settings.tapStepEnabled) {
+      onToggleChrome();
+      return;
+    }
 
     if (offsetY <= topZoneMax) {
       container.scrollBy({
-        top: -Math.max(180, Math.round(rect.height * TAP_STEP_RATIO)),
+        top: -stepDistance,
         behavior: 'smooth'
       });
       return;
@@ -637,7 +765,7 @@ function ReaderViewport({
 
     if (offsetY >= bottomZoneMin) {
       container.scrollBy({
-        top: Math.max(180, Math.round(rect.height * TAP_STEP_RATIO)),
+        top: stepDistance,
         behavior: 'smooth'
       });
       return;
@@ -646,6 +774,33 @@ function ReaderViewport({
     onToggleChrome();
   };
 
+  const maxScrollableTop = layout ? Math.max(0, layout.totalHeight - viewportSnapshot.height) : 0;
+  const fallbackPageRatio =
+    totalPages > 1 ? (Math.min(Math.max(1, currentPage), totalPages) - 1) / (totalPages - 1) : 0;
+  const scrollRatio = layout ? (maxScrollableTop > 0 ? viewportSnapshot.scrollTop / maxScrollableTop : 0) : fallbackPageRatio;
+  const safeScrollRatio = Math.min(1, Math.max(0, scrollRatio));
+  const progressPercent = Math.round(safeScrollRatio * 100);
+  const sliderValue = Math.round(safeScrollRatio * 1000);
+
+  const handleProgressJump = (nextSliderValue: number) => {
+    if (!layout || !containerRef.current) {
+      return;
+    }
+
+    const targetTop = maxScrollableTop * Math.min(1, Math.max(0, nextSliderValue / 1000));
+
+    containerRef.current.scrollTo({
+      top: targetTop,
+      behavior: 'auto'
+    });
+  };
+
+  useEffect(() => {
+    if (!chromeVisible) {
+      setSettingsOpen(false);
+    }
+  }, [chromeVisible]);
+
   return (
     <div className="reader-shell">
       <header className={`reader-toolbar ${chromeVisible ? 'is-visible' : ''}`}>
@@ -653,17 +808,15 @@ function ReaderViewport({
           返回
         </button>
         <div className="reader-toolbar__title">
-          <strong>{session.book.displayTitle}</strong>
+          <strong>{session.title?.displayTitle ?? session.book.displayTitle}</strong>
           <span>
-            第 {currentPage} / {totalPages} 页 · 当前段 {currentSegment}
+            {session.title ? `${session.book.displayTitle} · ` : ''}第 {currentPage} / {totalPages} 页
           </span>
         </div>
         <div className="reader-toolbar__actions">
-          <button className="icon-button" onClick={() => onZoomChange(Math.max(0.9, zoomScale - 0.1))}>
-            缩小
-          </button>
-          <button className="icon-button" onClick={() => onZoomChange(Math.min(2.2, zoomScale + 0.1))}>
-            放大
+          <StatusBadge status={session.book.availabilityStatus} />
+          <button className="icon-button" onClick={onOpenMore}>
+            •••
           </button>
         </div>
       </header>
@@ -687,6 +840,7 @@ function ReaderViewport({
                 pdf={pdf}
                 segment={segment}
                 renderMode={renderWindow ? getSegmentRenderMode(renderWindow, segment.order) : 'cold'}
+                showPageSeparators={settings.showPageSeparators}
                 reportRenderedRef={reportRenderedRef}
               />
             ))}
@@ -695,14 +849,89 @@ function ReaderViewport({
       </div>
 
       <footer className={`reader-statusbar ${chromeVisible ? 'is-visible' : ''}`}>
-        <span>{`热区 ${hotCount} 段 · 温区 ${warmCount} 段`}</span>
-        <span>
-          {lastRenderMetric
-            ? `上次渲染 ${lastRenderMetric.durationMs}ms · x${lastRenderMetric.qualityScale}`
-            : '等待首段渲染'}
+        <label className="reader-progress">
+          <span>进度</span>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            step={1}
+            value={sliderValue}
+            onChange={(event) => handleProgressJump(Number(event.target.value))}
+          />
+        </label>
+        <span className="reader-statusbar__summary">
+          {session.book.displayTitle} · 已读 {progressPercent}%
         </span>
-        <span>{loadDurationMs ? `首开 ${loadDurationMs}ms` : '正在计算布局'}</span>
+        <div className="reader-statusbar__actions">
+          <button className="icon-button" onClick={onOpenPrevChapter} disabled={!hasPrevChapter || isChapterSwitching}>
+            上一章
+          </button>
+          <button className="icon-button" onClick={onOpenChapterList} disabled={isChapterSwitching}>
+            章节列表
+          </button>
+          <button className="icon-button" onClick={onOpenNextChapter} disabled={!hasNextChapter || isChapterSwitching}>
+            下一章
+          </button>
+          <button className="icon-button" onClick={() => setSettingsOpen((value) => !value)}>
+            阅读设置
+          </button>
+        </div>
       </footer>
+
+      {settingsOpen ? (
+        <section className={`reader-settings-panel ${chromeVisible ? 'is-visible' : ''}`}>
+          <div className="reader-settings-panel__row">
+            <div>
+              <strong>点按步进</strong>
+              <p className="muted-text">关闭后，中上中下区域都只用于切换菜单。</p>
+            </div>
+            <button
+              className={`toggle-pill ${settings.tapStepEnabled ? 'is-active' : ''}`}
+              onClick={() => onSettingsChange({ tapStepEnabled: !settings.tapStepEnabled })}
+            >
+              {settings.tapStepEnabled ? '开启' : '关闭'}
+            </button>
+          </div>
+
+          <label className="reader-settings-panel__row reader-settings-panel__slider">
+            <div>
+              <strong>步进距离</strong>
+              <p className="muted-text">当前约为视口高度的 {Math.round(settings.tapStepRatio * 100)}%</p>
+            </div>
+            <input
+              type="range"
+              min={0.6}
+              max={1.1}
+              step={0.05}
+              value={settings.tapStepRatio}
+              onChange={(event) => onSettingsChange({ tapStepRatio: Number(event.target.value) })}
+            />
+          </label>
+
+          <div className="reader-settings-panel__row">
+            <div>
+              <strong>页面分隔细线</strong>
+              <p className="muted-text">连续画面默认只保留极淡细线。</p>
+            </div>
+            <button
+              className={`toggle-pill ${settings.showPageSeparators ? 'is-active' : ''}`}
+              onClick={() => onSettingsChange({ showPageSeparators: !settings.showPageSeparators })}
+            >
+              {settings.showPageSeparators ? '显示' : '隐藏'}
+            </button>
+          </div>
+
+          <p className="reader-settings-panel__meta">
+            热区 {hotCount} 段 · 温区 {warmCount} 段 · 当前段 {currentSegment} ·{' '}
+            {lastRenderMetric
+              ? `上次渲染 ${lastRenderMetric.durationMs}ms · x${lastRenderMetric.qualityScale}`
+              : loadDurationMs
+                ? `首开 ${loadDurationMs}ms`
+                : '正在计算布局'}
+          </p>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -711,14 +940,76 @@ function ReaderStateBlock({ children }: { children: ReactNode }) {
   return <main className="reader-state-block">{children}</main>;
 }
 
+function ReaderSheet({
+  title,
+  subtitle,
+  variant = 'default',
+  onClose,
+  children
+}: {
+  title: string;
+  subtitle?: string;
+  variant?: 'default' | 'half' | 'half-wide';
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const sheetClass =
+    variant === 'half-wide'
+      ? 'bottom-sheet bottom-sheet--half bottom-sheet--half-wide'
+      : variant === 'half'
+        ? 'bottom-sheet bottom-sheet--half'
+        : 'bottom-sheet';
+
+  return (
+    <div className="overlay-shell" role="presentation" onClick={onClose}>
+      <section
+        className={sheetClass}
+        role="dialog"
+        aria-modal="true"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="bottom-sheet__grabber" />
+        <div className="bottom-sheet__header">
+          <div>
+            <h2>{title}</h2>
+            {subtitle ? <p className="muted-text">{subtitle}</p> : null}
+          </div>
+          <button className="icon-button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+        <div className="bottom-sheet__content">{children}</div>
+      </section>
+    </div>
+  );
+}
+
 export function ReaderPage() {
+  const navigate = useNavigate();
   const { bookId } = useParams();
   const relinkInputRef = useRef<HTMLInputElement | null>(null);
+  const chapterCoverInputRef = useRef<HTMLInputElement | null>(null);
   const [session, setSession] = useState<ReaderSession | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
+  const [settings, setSettings] = useState<ReaderSettings>(() => loadReaderSettings());
   const [chromeVisible, setChromeVisible] = useState(true);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [isSwitchingChapter, setIsSwitchingChapter] = useState(false);
+  const [relinkTargetBookId, setRelinkTargetBookId] = useState<string | null>(null);
+  const [pendingChapterCoverId, setPendingChapterCoverId] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [chapterEntries, setChapterEntries] = useState<BookWithProgress[]>([]);
+  const [chapterSheetOpen, setChapterSheetOpen] = useState(false);
+  const [editingChapter, setEditingChapter] = useState<BookWithProgress | null>(null);
+  const [chapterDraft, setChapterDraft] = useState('');
+  const [removingChapter, setRemovingChapter] = useState<Pick<BookWithProgress, 'bookId' | 'displayTitle'> | null>(null);
+
+  const loadSession = async (nextBookId: string) => {
+    const nextSession = await libraryService.getReaderSession(nextBookId);
+    setSession(nextSession);
+    setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -743,6 +1034,72 @@ export function ReaderPage() {
   }, [bookId]);
 
   useEffect(() => {
+    setIsSwitchingChapter(false);
+    setRelinkTargetBookId(bookId ?? null);
+  }, [bookId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(READER_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+  }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadChapters = async () => {
+      if (!session?.title) {
+        setChapterEntries([]);
+        return;
+      }
+
+      const entries = await libraryService.listTitleChapters(session.title.titleId);
+      if (!cancelled) {
+        setChapterEntries(entries);
+      }
+    };
+
+    void loadChapters();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.title?.titleId]);
+
+  useEffect(() => {
+    if (!bookId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncReaderState = async () => {
+      const nextSession = await libraryService.getReaderSession(bookId);
+      if (cancelled) {
+        return;
+      }
+
+      setSession(nextSession);
+
+      if (!chapterSheetOpen || !nextSession?.title?.titleId) {
+        return;
+      }
+
+      const entries = await libraryService.listTitleChapters(nextSession.title.titleId);
+      if (!cancelled) {
+        setChapterEntries(entries);
+      }
+    };
+
+    const unsubscribe = subscribeLibraryChanged(() => {
+      void syncReaderState();
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [bookId, chapterSheetOpen]);
+
+  useEffect(() => {
     if (!chromeVisible) {
       return;
     }
@@ -753,36 +1110,53 @@ export function ReaderPage() {
     return () => window.clearTimeout(timer);
   }, [chromeVisible, session?.book.bookId]);
 
+  const refreshChapterEntries = async (titleId: string | undefined) => {
+    if (!titleId) {
+      setChapterEntries([]);
+      return;
+    }
+
+    setChapterEntries(await libraryService.listTitleChapters(titleId));
+  };
+
   const handleRelink = async (files: FileList | null) => {
     const file = files?.[0];
-    if (!file || !bookId) {
+    const targetBookId = relinkTargetBookId ?? bookId;
+
+    if (!file || !targetBookId) {
       return;
     }
 
     try {
-      const book = await libraryService.relinkLocalFile(bookId, file);
+      const book = await libraryService.relinkLocalFile(targetBookId, file);
       setPageMessage(`已恢复 ${book.displayTitle}`);
-      const nextSession = await libraryService.getReaderSession(book.bookId);
-      setSession(nextSession);
-      setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+      const currentOpenBookId = session?.book.bookId ?? book.bookId;
+      if (book.bookId === currentOpenBookId) {
+        await loadSession(book.bookId);
+      } else {
+        await loadSession(currentOpenBookId);
+      }
+      await refreshChapterEntries(session?.title?.titleId);
       setChromeVisible(true);
     } catch (error) {
       setPageMessage(error instanceof Error ? error.message : '重关联失败');
+    } finally {
+      setRelinkTargetBookId(bookId ?? null);
     }
   };
 
-  const handleRemoteRetry = async () => {
-    if (!session || session.book.sourceType !== 'remote_url') {
+  const handleRemoteRetry = async (sourceInstanceId?: string) => {
+    if (!session) {
       return;
     }
 
+    const targetSourceInstanceId = sourceInstanceId ?? session.book.sourceInstanceId;
     setIsRecovering(true);
 
     try {
-      const result = await libraryService.refreshRemoteSource(session.book.sourceInstanceId);
-      const nextSession = await libraryService.getReaderSession(session.book.bookId);
-      setSession(nextSession);
-      setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+      const result = await libraryService.refreshRemoteSource(targetSourceInstanceId);
+      await loadSession(session.book.bookId);
+      await refreshChapterEntries(session.title?.titleId);
       setPageMessage(
         result.validation.status === 'ready'
           ? `已重新连接 ${result.source.name}`
@@ -793,6 +1167,88 @@ export function ReaderPage() {
     } finally {
       setIsRecovering(false);
     }
+  };
+
+  const handleChapterCover = async (files: FileList | null) => {
+    const file = files?.[0];
+    const targetBookId = pendingChapterCoverId ?? session?.book.bookId;
+
+    if (!file || !session || !targetBookId) {
+      return;
+    }
+
+    try {
+      await libraryService.setBookCoverFile(targetBookId, file);
+      await loadSession(session.book.bookId);
+      await refreshChapterEntries(session.title?.titleId);
+      setPageMessage('章节封面已更新');
+    } catch (error) {
+      setPageMessage(error instanceof Error ? error.message : '更新章节封面失败');
+    } finally {
+      setPendingChapterCoverId(null);
+    }
+  };
+
+  const openChapterSheet = async () => {
+    if (!session?.title) {
+      return;
+    }
+
+    await refreshChapterEntries(session.title.titleId);
+    setChapterSheetOpen(true);
+    setMoreOpen(false);
+  };
+
+  const openChapterById = async (nextBookId: string) => {
+    if (nextBookId === session?.book.bookId) {
+      return;
+    }
+
+    setIsSwitchingChapter(true);
+    setMoreOpen(false);
+    setChapterSheetOpen(false);
+    setChromeVisible(true);
+    navigate(`/reader/${nextBookId}`);
+  };
+
+  const handleChapterPrimaryAction = async (chapter: BookWithProgress) => {
+    if (chapter.bookId === session?.book.bookId && chapter.availabilityStatus === 'available') {
+      return;
+    }
+
+    if (chapter.availabilityStatus === 'available') {
+      await openChapterById(chapter.bookId);
+      return;
+    }
+
+    if (chapter.sourceType === 'remote_url') {
+      await handleRemoteRetry(chapter.sourceInstanceId);
+      return;
+    }
+
+    setRelinkTargetBookId(chapter.bookId);
+    relinkInputRef.current?.click();
+  };
+
+  const handleRemoveChapter = async (chapter: Pick<BookWithProgress, 'bookId' | 'displayTitle'>) => {
+    await libraryService.removeBook(chapter.bookId);
+    if (chapter.bookId === session?.book.bookId) {
+      navigate('/');
+      return;
+    }
+
+    await refreshChapterEntries(session?.title?.titleId);
+    setPageMessage('章节已移除');
+  };
+
+  const confirmRemoveChapter = async () => {
+    if (!removingChapter) {
+      return;
+    }
+
+    const target = removingChapter;
+    setRemovingChapter(null);
+    await handleRemoveChapter(target);
   };
 
   if (!bookId) {
@@ -821,6 +1277,13 @@ export function ReaderPage() {
       ? session.book.availabilityReason ??
         (isRemoteUnavailable ? '当前需重新连接远程书源。' : '当前需重新选择原文件。')
       : null;
+  const currentChapterIndex = chapterEntries.findIndex((entry) => entry.bookId === session.book.bookId);
+  const previousChapter =
+    currentChapterIndex >= 0 && currentChapterIndex < chapterEntries.length - 1
+      ? chapterEntries[currentChapterIndex + 1]
+      : null;
+  const nextChapter = currentChapterIndex > 0 ? chapterEntries[currentChapterIndex - 1] : null;
+  const duplicateHintMap = buildDuplicateChapterHintMap(chapterEntries);
 
   return (
     <>
@@ -831,6 +1294,16 @@ export function ReaderPage() {
         accept="application/pdf,.pdf"
         onChange={(event) => {
           void handleRelink(event.target.files);
+          event.currentTarget.value = '';
+        }}
+      />
+      <input
+        ref={chapterCoverInputRef}
+        className="visually-hidden"
+        type="file"
+        accept="image/*"
+        onChange={(event) => {
+          void handleChapterCover(event.target.files);
           event.currentTarget.value = '';
         }}
       />
@@ -847,7 +1320,13 @@ export function ReaderPage() {
                 {isRecovering ? '正在重试...' : '重试连接书源'}
               </button>
             ) : (
-              <button className="action-button action-button--primary" onClick={() => relinkInputRef.current?.click()}>
+              <button
+                className="action-button action-button--primary"
+                onClick={() => {
+                  setRelinkTargetBookId(session.book.bookId);
+                  relinkInputRef.current?.click();
+                }}
+              >
                 重新选择原文件
               </button>
             )}
@@ -863,14 +1342,185 @@ export function ReaderPage() {
             session={session}
             chromeVisible={chromeVisible}
             zoomScale={zoomScale}
+            settings={settings}
             onToggleChrome={() => setChromeVisible((value) => !value)}
-            onZoomChange={(next) => {
-              setZoomScale(Number(next.toFixed(2)));
+            onSettingsChange={(patch) => setSettings((current) => ({ ...current, ...patch }))}
+            onOpenMore={() => {
+              setMoreOpen(true);
               setChromeVisible(true);
             }}
+            onOpenChapterList={() => void openChapterSheet()}
+            onOpenPrevChapter={() => void openChapterById(previousChapter?.bookId ?? session.book.bookId)}
+            onOpenNextChapter={() => void openChapterById(nextChapter?.bookId ?? session.book.bookId)}
+            hasPrevChapter={Boolean(previousChapter)}
+            hasNextChapter={Boolean(nextChapter)}
+            isChapterSwitching={isSwitchingChapter}
           />
         </>
       )}
+
+      {moreOpen && session.book.availabilityStatus === 'available' ? (
+        <ReaderSheet title={session.book.displayTitle} subtitle={session.title?.displayTitle} onClose={() => setMoreOpen(false)}>
+          <div className="stack-actions">
+            <button className="sheet-action" onClick={() => void openChapterSheet()}>
+              打开章节列表
+            </button>
+            <button
+              className="sheet-action"
+              onClick={() => {
+                setEditingChapter({ ...session.book, progress: session.progress });
+                setChapterDraft(session.book.displayTitle);
+                setMoreOpen(false);
+              }}
+            >
+              修改章节名
+            </button>
+            <button
+              className="sheet-action"
+              onClick={() => {
+                setPendingChapterCoverId(session.book.bookId);
+                chapterCoverInputRef.current?.click();
+                setMoreOpen(false);
+              }}
+            >
+              修改章节封面
+            </button>
+            <button
+              className="sheet-action"
+              onClick={() => {
+                if (session.book.sourceType === 'remote_url') {
+                  void handleRemoteRetry();
+                } else {
+                  setRelinkTargetBookId(session.book.bookId);
+                  relinkInputRef.current?.click();
+                }
+                setMoreOpen(false);
+              }}
+            >
+              {session.book.sourceType === 'remote_url' ? '重试连接来源' : '重新选择原文件'}
+            </button>
+            <button
+              className="sheet-action is-danger"
+              onClick={() => {
+                setMoreOpen(false);
+                setRemovingChapter(session.book);
+              }}
+            >
+              从作品中移除本章
+            </button>
+          </div>
+        </ReaderSheet>
+      ) : null}
+
+      {chapterSheetOpen && session.title ? (
+        <ReaderSheet title={session.title.displayTitle} subtitle="章节列表" variant="half-wide" onClose={() => setChapterSheetOpen(false)}>
+          <div className="chapter-list">
+            {chapterEntries.map((chapter) => {
+              const duplicateHint = duplicateHintMap.get(chapter.bookId);
+
+              return (
+                <article key={chapter.bookId} className={`chapter-row ${chapter.bookId === session.book.bookId ? 'is-current' : ''}`}>
+                  <div className="chapter-row__cover">
+                    <CoverImage bookId={chapter.bookId} title={chapter.displayTitle} coverRef={chapter.coverRef} />
+                  </div>
+                  <div className="chapter-row__meta">
+                    <strong>{chapter.displayTitle}</strong>
+                    <p className="muted-text">
+                      {chapter.progress ? formatProgressSummary(chapter.progress) : '未开始'} ·{' '}
+                      {chapter.availabilityStatus === 'available' ? '可打开' : chapter.availabilityReason ?? '不可用'}
+                    </p>
+                    {duplicateHint ? (
+                      <p className="chapter-row__duplicate">
+                        <span className="meta-chip">重复内容</span>
+                        <span className="muted-text">
+                          与《{duplicateHint.matchedChapterName}》({duplicateHint.matchedFileName}) 重复
+                        </span>
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="chapter-row__text-actions">
+                    <button
+                      className="text-action-button"
+                      onClick={() => void handleChapterPrimaryAction(chapter)}
+                      disabled={isRecovering}
+                    >
+                      {chapter.bookId === session.book.bookId
+                        ? '当前章节'
+                        : chapter.availabilityStatus === 'available'
+                          ? '打开'
+                          : '修复'}
+                    </button>
+                    <button
+                      className="text-action-button"
+                      onClick={() => {
+                        setEditingChapter(chapter);
+                        setChapterDraft(chapter.displayTitle);
+                      }}
+                    >
+                      改名
+                    </button>
+                    <button
+                      className="text-action-button"
+                      onClick={() => {
+                        setPendingChapterCoverId(chapter.bookId);
+                        chapterCoverInputRef.current?.click();
+                      }}
+                    >
+                      封面
+                    </button>
+                    <button
+                      className="text-action-button is-danger"
+                      onClick={() => {
+                        setRemovingChapter(chapter);
+                      }}
+                    >
+                      移除
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </ReaderSheet>
+      ) : null}
+
+      {editingChapter ? (
+        <ReaderSheet title="修改章节名" onClose={() => setEditingChapter(null)}>
+          <label className="field">
+            <span>章节名</span>
+            <input value={chapterDraft} onChange={(event) => setChapterDraft(event.target.value)} />
+          </label>
+          <div className="button-row">
+            <button
+              className="action-button action-button--primary"
+              onClick={() => {
+                void libraryService.renameBook(editingChapter.bookId, chapterDraft).then(async () => {
+                  await loadSession(session.book.bookId);
+                  await refreshChapterEntries(session.title?.titleId);
+                  setEditingChapter(null);
+                  setPageMessage('章节名已更新');
+                });
+              }}
+            >
+              保存
+            </button>
+          </div>
+        </ReaderSheet>
+      ) : null}
+
+      {removingChapter ? (
+        <ReaderSheet title="移除章节" onClose={() => setRemovingChapter(null)}>
+          <p className="muted-text">确认移除章节「{removingChapter.displayTitle}」吗？此操作不可撤销。</p>
+          <div className="button-row">
+            <button className="action-button" onClick={() => setRemovingChapter(null)}>
+              取消
+            </button>
+            <button className="action-button action-button--primary" onClick={() => void confirmRemoveChapter()}>
+              确认移除
+            </button>
+          </div>
+        </ReaderSheet>
+      ) : null}
     </>
   );
 }

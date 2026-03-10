@@ -34,7 +34,7 @@ export interface SourceValidationResult {
 
 export interface SourceCatalogBook {
   sourceKey: string;
-  canonicalKey: string;
+  contentHash: string;
   title: string;
   displayTitle: string;
   fileName: string;

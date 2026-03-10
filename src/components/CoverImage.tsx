@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { subscribeLibraryChanged } from '../services/libraryEvents';
 import { libraryService } from '../services/libraryService';
 
 interface CoverImageProps {
@@ -13,6 +14,13 @@ function isRemoteCover(coverRef?: string | null): coverRef is string {
 
 export function CoverImage({ bookId, title, coverRef }: CoverImageProps) {
   const [url, setUrl] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeLibraryChanged(() => {
+      setRefreshTick((value) => value + 1);
+    });
+  }, []);
 
   useEffect(() => {
     if (isRemoteCover(coverRef)) {
@@ -39,7 +47,7 @@ export function CoverImage({ bookId, title, coverRef }: CoverImageProps) {
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [bookId, coverRef]);
+  }, [bookId, coverRef, refreshTick]);
 
   if (!url) {
     return (

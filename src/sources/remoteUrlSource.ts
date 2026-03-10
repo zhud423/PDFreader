@@ -54,7 +54,7 @@ async function fetchManifest(source: SourceInstanceRecord) {
 function findBookEntry(manifestBooks: RemoteLibraryBookEntry[], book: BookRecord): RemoteLibraryBookEntry | null {
   return (
     manifestBooks.find((entry) => entry.id === book.sourceKey) ??
-    manifestBooks.find((entry) => entry.canonicalKey === book.canonicalKey) ??
+    manifestBooks.find((entry) => entry.contentHash === book.contentHash) ??
     null
   );
 }
@@ -103,7 +103,7 @@ class RemoteUrlSourceAdapter implements SourceAdapter {
 
     return manifest.books.map((entry) => ({
       sourceKey: entry.id,
-      canonicalKey: entry.canonicalKey,
+      contentHash: entry.contentHash,
       title: entry.title,
       displayTitle: entry.title,
       fileName: entry.fileName,

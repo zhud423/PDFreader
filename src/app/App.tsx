@@ -11,12 +11,18 @@ const ReaderPage = lazy(async () => {
   return { default: module.ReaderPage };
 });
 
+const AddPage = lazy(async () => {
+  const module = await import('../pages/AddPage');
+  return { default: module.AddPage };
+});
+
 export function App() {
   return (
     <BrowserRouter>
       <Suspense fallback={<main className="reader-state-block"><h1>正在加载应用...</h1></main>}>
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/add" element={<AddPage />} />
           <Route path="/reader/:bookId" element={<ReaderPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

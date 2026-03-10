@@ -3,7 +3,7 @@ import { sha256Hex } from '../../shared/utils/hash';
 
 export interface PdfInspection {
   title: string;
-  canonicalKey: string;
+  contentHash: string;
   pageCount: number;
   firstPageWidth: number;
   firstPageHeight: number;
@@ -25,7 +25,8 @@ export async function inspectPdfFile(file: File): Promise<PdfInspection> {
   }
 
   const bytes = await file.arrayBuffer();
-  const task = getDocument({ data: bytes });
+  const contentHash = await sha256Hex(bytes);
+  const task = getDocument({ data: bytes.slice(0) });
   const pdf = await task.promise;
 
   try {
@@ -43,14 +44,6 @@ export async function inspectPdfFile(file: File): Promise<PdfInspection> {
       typeof documentInfo.Title === 'string' && documentInfo.Title.trim()
         ? documentInfo.Title.trim()
         : fileStem;
-    const canonicalSeed = [
-      file.name.trim().toLowerCase(),
-      file.size,
-      pdf.numPages,
-      Math.round(baseViewport.width),
-      Math.round(baseViewport.height)
-    ].join(':');
-    const canonicalKey = await sha256Hex(canonicalSeed);
     const coverWidth = 320;
     const coverScale = coverWidth / baseViewport.width;
     const coverViewport = firstPage.getViewport({ scale: coverScale });
@@ -79,7 +72,7 @@ export async function inspectPdfFile(file: File): Promise<PdfInspection> {
 
     return {
       title: rawTitle,
-      canonicalKey,
+      contentHash,
       pageCount: pdf.numPages,
       firstPageWidth: Math.round(baseViewport.width),
       firstPageHeight: Math.round(baseViewport.height),
