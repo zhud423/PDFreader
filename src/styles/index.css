@@ -53,6 +53,10 @@ button:disabled {
   opacity: 0.68;
 }
 
+button:disabled:hover {
+  transform: none;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -305,6 +309,11 @@ a {
   color: #fffaf4;
 }
 
+.action-button--primary:disabled {
+  background: rgba(46, 33, 20, 0.14);
+  color: rgba(29, 23, 15, 0.5);
+}
+
 .action-button--primary:hover:not(:disabled),
 .action-button--primary:focus-visible:not(:disabled) {
   background: linear-gradient(135deg, #b66235 0%, #9b4e24 100%);
@@ -429,6 +438,7 @@ a {
 .library-title-card {
   display: grid;
   grid-template-columns: 124px minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
   padding: 16px;
   border-radius: 26px;
@@ -436,9 +446,19 @@ a {
 }
 
 .library-title-card__cover {
+  display: flex;
+  align-self: start;
   padding: 0;
   border: none;
   background: transparent;
+}
+
+.library-title-card__cover .cover-image,
+.library-title-card__cover .cover-image--fallback {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
 }
 
 .library-title-card__body {
@@ -446,7 +466,6 @@ a {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  min-height: 100%;
 }
 
 .library-title-card__topline,
@@ -501,15 +520,18 @@ a {
 }
 
 .library-title-card__hint {
+  margin: 0;
+  flex: 1;
   font-size: 0.88rem;
   text-align: right;
-  max-width: 420px;
+  line-height: 1.3;
+  max-width: none;
 }
 
 .library-title-card__action-stack {
-  margin-top: auto;
+  margin-top: 8px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: flex-end;
   gap: 12px;
 }
@@ -554,6 +576,44 @@ a {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
+}
+
+.add-flow-selector {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.add-flow-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.add-flow-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0.58rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(62, 41, 17, 0.1);
+  background: rgba(46, 33, 20, 0.05);
+  color: #1d170f;
+}
+
+.add-flow-radio input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.add-flow-radio span {
+  line-height: 1.2;
+}
+
+.add-flow-radio.is-active {
+  border-color: rgba(165, 88, 46, 0.42);
+  background: rgba(165, 88, 46, 0.12);
 }
 
 .local-import-routes {
@@ -642,7 +702,7 @@ a {
 
 .bottom-sheet--half-wide {
   width: min(1180px, calc(100vw - 16px));
-  max-height: min(72vh, 760px);
+  max-height: min(86vh, 912px);
 }
 
 .bottom-sheet__grabber {
@@ -1187,7 +1247,8 @@ a {
   }
 
   .library-tools {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .page-header {
@@ -1211,8 +1272,10 @@ a {
   }
 
   .reader-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    gap: 10px;
+    padding: 10px 12px;
   }
 
   .reader-statusbar,
@@ -1222,8 +1285,29 @@ a {
   }
 
   .reader-toolbar__actions {
-    width: 100%;
+    width: auto;
     justify-content: flex-end;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  .reader-toolbar__title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .reader-toolbar__title strong {
+    font-size: 1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .reader-toolbar__title span {
+    font-size: 0.82rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .floating-add-button {
@@ -1233,17 +1317,102 @@ a {
   }
 
   .library-title-card {
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: 76px minmax(0, 1fr);
   }
 
-  .library-title-card__topline,
+  .library-title-card__topline h3 {
+    font-size: 0.98rem;
+  }
+
+  .library-title-card__body p {
+    font-size: 0.84rem;
+    line-height: 1.24;
+  }
+
   .page-bar {
     flex-direction: column;
   }
 
-  .chapter-row__text-actions,
-  .library-title-card__badges {
+  .library-title-card__topline {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .add-shell .page-bar {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .add-shell .page-bar .icon-button {
+    padding: 0.56rem 0.92rem;
+    font-size: 1rem;
+    flex: 0 0 auto;
+  }
+
+  .add-shell .page-bar__title {
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .add-shell .page-bar__title h1 {
+    font-size: clamp(1.8rem, 7.8vw, 2.2rem);
+    line-height: 1.08;
+  }
+
+  .add-shell .page-bar__title p {
+    font-size: 0.98rem;
+  }
+
+  .add-shell .section-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .add-shell .section-heading h2 {
+    font-size: clamp(1.5rem, 7vw, 1.9rem);
+    line-height: 1.14;
+  }
+
+  .add-shell .local-import-route .section-heading {
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+
+  .add-shell .local-import-route h3 {
+    font-size: 1.12rem;
+    line-height: 1.2;
+  }
+
+  .add-shell .local-action-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .add-flow-radio-group {
+    flex-direction: column;
+  }
+
+  .add-flow-radio {
+    width: 100%;
     justify-content: flex-start;
+  }
+
+  .chapter-row__text-actions {
+    justify-content: flex-start;
+  }
+
+  .library-title-card__badges {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .meta-chip,
+  .status-badge {
+    font-size: 0.62rem;
+    padding: 0.18rem 0.4rem;
   }
 
   .library-title-card__actions {
@@ -1252,13 +1421,37 @@ a {
   }
 
   .library-title-card__action-stack {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 8px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   .library-title-card__hint {
-    max-width: 100%;
+    font-size: 0.7rem;
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: none;
+  }
+
+  .library-title-card__actions .action-button,
+  .library-title-card__actions .icon-button {
+    font-size: 0.8rem;
+    padding: 0.42rem 0.58rem;
+  }
+
+  .library-title-card__actions .action-button {
+    min-width: 82px;
+  }
+
+  .library-title-card__actions {
+    gap: 6px;
   }
 
   .chapter-row {
@@ -1268,7 +1461,7 @@ a {
 
   .bottom-sheet--half-wide {
     width: calc(100vw - 10px);
-    max-height: min(78vh, 720px);
+    max-height: min(94vh, 864px);
   }
 
   .chapter-row__cover {
@@ -1281,8 +1474,29 @@ a {
   }
 
   .reader-statusbar__actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .reader-statusbar__summary {
+    font-size: 0.9rem;
+  }
+
+  .reader-progress {
+    gap: 6px;
+  }
+
+  .reader-progress span {
+    font-size: 0.84rem;
+  }
+
+  .reader-statusbar .icon-button {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.84rem;
+    padding: 0.5rem 0.62rem;
+    white-space: nowrap;
   }
 
   .reader-settings-panel__row,
@@ -1293,5 +1507,58 @@ a {
 
   .reader-settings-panel__slider input {
     max-width: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .home-shell .section-heading h2 {
+    font-size: clamp(1.42rem, 6.2vw, 1.72rem);
+  }
+
+  .home-shell .section-heading span {
+    font-size: 0.9rem;
+  }
+
+  .library-title-card {
+    grid-template-columns: 70px minmax(0, 1fr);
+    gap: 8px;
+    padding: 9px;
+    border-radius: 18px;
+  }
+
+  .library-title-card__topline h3 {
+    font-size: 0.92rem;
+    line-height: 1.14;
+  }
+
+  .library-title-card__body p {
+    font-size: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .meta-chip,
+  .status-badge {
+    font-size: 0.58rem;
+    padding: 0.16rem 0.34rem;
+  }
+
+  .library-title-card__hint {
+    font-size: 0.64rem;
+    max-width: none;
+  }
+
+  .library-title-card__actions .action-button,
+  .library-title-card__actions .icon-button {
+    font-size: 0.76rem;
+    padding: 0.38rem 0.5rem;
+  }
+
+  .library-title-card__actions .action-button {
+    min-width: 74px;
+  }
+
+  .add-flow-radio {
+    font-size: 0.92rem;
+    padding: 0.52rem 0.76rem;
   }
 }

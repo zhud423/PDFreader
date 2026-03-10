@@ -22,6 +22,8 @@ interface SourceDraft {
   baseUrl: string;
 }
 
+type ImportFlowMode = 'new' | 'existing';
+
 function buildImportFeedback(result: ImportResult): AddPageFeedback {
   const addedCount = result.imported.length;
   const parts: string[] = [];
@@ -118,7 +120,6 @@ export function AddPage() {
   const newTitleInputRef = useRef<HTMLInputElement | null>(null);
   const titleCoverInputRef = useRef<HTMLInputElement | null>(null);
   const pendingImportOptionsRef = useRef<ImportOptions | undefined>(undefined);
-  const pendingTitleCoverRef = useRef<File | null>(null);
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [feedback, setFeedback] = useState<AddPageFeedback | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -128,6 +129,9 @@ export function AddPage() {
   const [existingTitleId, setExistingTitleId] = useState('');
   const [newTitleName, setNewTitleName] = useState('');
   const [newTitleCoverName, setNewTitleCoverName] = useState('');
+  const [newTitleCoverFile, setNewTitleCoverFile] = useState<File | null>(null);
+  const [importFlowMode, setImportFlowMode] = useState<ImportFlowMode>('new');
+  const canImportAsNewTitle = Boolean(newTitleName.trim() && newTitleCoverFile) && !isImporting;
 
   const loadOverview = async () => {
     const next = await libraryService.getHomeOverview();
@@ -162,20 +166,30 @@ export function AddPage() {
     }
 
     setIsImporting(true);
-    setFeedback(null);
+    setFeedback({
+      summary: '正在导入章节',
+      details: ['正在解析 PDF、生成封面并写入书库，请稍候...'],
+      tone: 'normal'
+    });
     setLastImportedBookId(null);
 
     try {
-      const result = await libraryService.importLocalFiles(pickedFiles, pendingImportOptionsRef.current);
-      if (pendingTitleCoverRef.current && result.imported[0]) {
-        await libraryService.setTitleCoverFile(result.imported[0].titleId, pendingTitleCoverRef.current);
+      const importOptions = pendingImportOptionsRef.current;
+      const isNewTitleImport = Boolean(importOptions?.newTitleName);
+      const result = await libraryService.importLocalFiles(pickedFiles, importOptions);
+      if (newTitleCoverFile && result.imported[0] && isNewTitleImport) {
+        await libraryService.setTitleCoverFile(result.imported[0].titleId, newTitleCoverFile);
       }
       setFeedback(buildImportFeedback(result));
       setLastImportedBookId(result.imported.at(0)?.bookId ?? null);
+      if (isNewTitleImport) {
+        setNewTitleName('');
+        setNewTitleCoverName('');
+        setNewTitleCoverFile(null);
+      }
       await loadOverview();
     } finally {
       pendingImportOptionsRef.current = undefined;
-      pendingTitleCoverRef.current = null;
       setIsImporting(false);
     }
   };
@@ -184,6 +198,15 @@ export function AddPage() {
     if (target === 'existing') {
       pendingImportOptionsRef.current = existingTitleId ? { targetTitleId: existingTitleId } : undefined;
       existingInputRef.current?.click();
+      return;
+    }
+
+    if (!newTitleName.trim() || !newTitleCoverFile) {
+      setFeedback({
+        summary: '请先填写作品名并选择作品封面',
+        details: ['再选择多个 PDF 创建新作品。'],
+        tone: 'warning'
+      });
       return;
     }
 
@@ -244,7 +267,7 @@ export function AddPage() {
   const titleEntries = overview?.titleEntries ?? [];
   const focusRemote = searchParams.get('focus') === 'remote';
   const operationLoadingText = isImporting
-    ? '正在导入章节、生成封面并写入书库，请稍候...'
+    ? '正在加载图书并导入章节（解析 PDF、生成封面、写入书库）...'
     : syncingSourceId
       ? '正在连接并同步局域网书源，请稍候...'
       : null;
@@ -280,7 +303,7 @@ export function AddPage() {
         accept="image/*"
         onChange={(event) => {
           const file = event.target.files?.[0] ?? null;
-          pendingTitleCoverRef.current = file;
+          setNewTitleCoverFile(file);
           setNewTitleCoverName(file?.name ?? '');
           event.currentTarget.value = '';
         }}
@@ -299,13 +322,38 @@ export function AddPage() {
       <section className="content-block add-section">
         <div className="section-heading">
           <h2>本地书源导入</h2>
-          <span>两条路径：新建作品 / 添加章节</span>
         </div>
-        <div className="local-import-routes">
+        <div className="add-flow-selector">
+          <p className="muted-text">选择导入路经</p>
+          <div className="add-flow-radio-group" role="radiogroup" aria-label="导入路径">
+            <label className={`add-flow-radio ${importFlowMode === 'new' ? 'is-active' : ''}`}>
+              <input
+                type="radio"
+                name="import-flow-mode"
+                value="new"
+                checked={importFlowMode === 'new'}
+                onChange={() => setImportFlowMode('new')}
+              />
+              <span>添加作品并导入章节</span>
+            </label>
+            <label className={`add-flow-radio ${importFlowMode === 'existing' ? 'is-active' : ''}`}>
+              <input
+                type="radio"
+                name="import-flow-mode"
+                value="existing"
+                checked={importFlowMode === 'existing'}
+                onChange={() => setImportFlowMode('existing')}
+              />
+              <span>添加章节到已有作品</span>
+            </label>
+          </div>
+        </div>
+
+        {importFlowMode === 'new' ? (
           <article className="local-import-route">
             <div className="section-heading">
-              <h3>路径一：添加新作品</h3>
-              <span>创建作品后批量导入章节</span>
+              <h3>添加新作品</h3>
+              <span>填写作品信息后批量导入章节</span>
             </div>
 
             <div className="local-import-create">
@@ -332,19 +380,20 @@ export function AddPage() {
                 <button
                   className="action-button action-button--primary local-action-button"
                   onClick={() => openImportPicker('new')}
-                  disabled={!newTitleName.trim() || isImporting}
+                  disabled={!canImportAsNewTitle}
                 >
-                  选择多个 PDF 并创建作品
+                  {isImporting ? '正在导入...' : '选择多个 PDF 并创建作品'}
                 </button>
               </div>
             </div>
           </article>
-
+        ) : (
           <article className="local-import-route">
             <div className="section-heading">
-              <h3>路径二：添加新章节到已有作品</h3>
+              <h3>添加新章节</h3>
               <span>支持批量选择多个 PDF</span>
             </div>
+
             {titleEntries.length > 0 ? (
               <>
                 <label className="field">
@@ -364,18 +413,18 @@ export function AddPage() {
                     onClick={() => openImportPicker('existing')}
                     disabled={!existingTitleId || isImporting}
                   >
-                    选择多个 PDF
+                    {isImporting ? '正在导入...' : '选择多个 PDF'}
                   </button>
                 </div>
               </>
             ) : (
               <article className="empty-panel">
                 <h3>还没有可归属的作品</h3>
-                <p>先使用路径一创建一个作品，之后再往作品里追加章节。</p>
+                <p>请先用路径一新建一个作品，然后再通过路径二追加章节。</p>
               </article>
             )}
           </article>
-        </div>
+        )}
 
         <div className="operation-feedback-block">
           {operationLoadingText ? (

@@ -521,7 +521,7 @@ export function HomePage() {
       <section className="library-header">
         <div>
           <p className="eyebrow">© 2026 小宝专用. All rights reserved.</p>
-          <h1>书库</h1>
+          <h1>条漫阅读器</h1>
           <p className="hero-copy">专门用于小黄漫的长漫，竖向阅读</p>
         </div>
 
@@ -555,7 +555,7 @@ export function HomePage() {
 
       <section className="content-block home-library-block">
         <div className="section-heading">
-          <h2>书库作品</h2>
+          <h2>书库</h2>
           <span>{displayedTitles.length} 个作品</span>
         </div>
 
