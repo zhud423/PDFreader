@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "title": "Home Comics",
+  "generatedAt": "2026-03-09T12:00:00.000Z",
+  "books": [
+    {
+      "id": "chainsaw-man-001",
+      "title": "Chainsaw Man 001",
+      "fileName": "Chainsaw.Man.001.pdf",
+      "canonicalKey": "chainsaw-man-001-7421f0d8",
+      "fileSize": 84235671,
+      "mimeType": "application/pdf",
+      "pageCount": 1,
+      "firstPageWidth": 1280,
+      "firstPageHeight": 32768,
+      "pdfPath": "./books/Chainsaw.Man.001.pdf",
+      "coverPath": "./covers/chainsaw-man-001.jpg",
+      "updatedAt": "2026-03-08T08:30:00.000Z"
+    }
+  ]
+}

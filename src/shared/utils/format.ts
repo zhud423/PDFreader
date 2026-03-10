@@ -52,3 +52,15 @@ export function formatAvailabilityLabel(status: AvailabilityStatus): string {
   }
 }
 
+export function formatSourceStatusLabel(status: 'active' | 'offline' | 'disabled'): string {
+  switch (status) {
+    case 'active':
+      return '在线';
+    case 'offline':
+      return '离线';
+    case 'disabled':
+      return '停用';
+    default:
+      return '未知状态';
+  }
+}

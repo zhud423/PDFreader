@@ -11,6 +11,7 @@ export interface ReaderPageLayout {
 
 export interface ReaderSegment {
   id: string;
+  order: number;
   pageIndex: number;
   pageNumber: number;
   segmentIndex: number;
@@ -30,17 +31,42 @@ export interface ReaderLayout {
   segmentTargetHeight: number;
 }
 
+export type ReaderScrollDirection = 'forward' | 'backward' | 'idle';
+export type ReaderSegmentRenderMode = 'hot' | 'warm' | 'cold';
+
+export interface ReaderRenderWindow {
+  anchorIndex: number;
+  visibleStart: number;
+  visibleEnd: number;
+  hotStart: number;
+  hotEnd: number;
+  warmStart: number;
+  warmEnd: number;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function computeSegmentTargetHeight(viewportHeight: number): number {
+  return clamp(viewportHeight * 1.35, 720, 1400);
+}
+
+function getSegmentAtOffset(layout: ReaderLayout, offset: number): ReaderSegment | null {
+  if (layout.segments.length === 0) {
+    return null;
+  }
+
+  return findSegmentForScroll(layout, Math.max(0, offset));
 }
 
 export async function buildReaderLayout(
   pdf: PDFDocumentProxy,
   input: { targetWidth: number; viewportHeight: number; zoomScale: number }
 ): Promise<ReaderLayout> {
-  const pageGap = 18;
-  const segmentTargetHeight = clamp(input.viewportHeight * 1.35, 720, 1400);
-  const targetWidth = Math.max(320, Math.min(input.targetWidth, 980) - 32) * input.zoomScale;
+  const pageGap = 0;
+  const segmentTargetHeight = computeSegmentTargetHeight(input.viewportHeight);
+  const targetWidth = Math.max(320, input.targetWidth) * input.zoomScale;
   const pages: ReaderPageLayout[] = [];
   const segments: ReaderSegment[] = [];
   let cursorTop = 0;
@@ -69,6 +95,7 @@ export async function buildReaderLayout(
 
       segments.push({
         id: `p${pageNumber}-s${segmentIndex}`,
+        order: segments.length,
         pageIndex: pageNumber - 1,
         pageNumber,
         segmentIndex,
@@ -149,3 +176,76 @@ export function resolveProgressSegment(
   return samePageSegments[Math.min(progress.segmentIndex, samePageSegments.length - 1)] ?? samePageSegments[0];
 }
 
+export function resolveProgressScrollTop(
+  layout: ReaderLayout,
+  progress: ProgressRecord | null
+): number {
+  const targetSegment = resolveProgressSegment(layout, progress);
+
+  if (!targetSegment) {
+    return 0;
+  }
+
+  if (!progress) {
+    return targetSegment.top;
+  }
+
+  const previousSegmentHeight = computeSegmentTargetHeight(progress.viewportHeight || targetSegment.height);
+  const ratio = clamp(progress.scrollOffsetWithinSegment / Math.max(1, previousSegmentHeight), 0, 1);
+  const offsetWithinSegment = Math.round(ratio * targetSegment.height);
+
+  return targetSegment.top + Math.min(targetSegment.height, Math.max(0, offsetWithinSegment));
+}
+
+export function resolveRenderWindow(
+  layout: ReaderLayout,
+  input: {
+    scrollTop: number;
+    viewportHeight: number;
+    direction: ReaderScrollDirection;
+  }
+): ReaderRenderWindow {
+  const lastIndex = Math.max(0, layout.segments.length - 1);
+  const anchorSegment = getSegmentAtOffset(layout, input.scrollTop);
+  const visibleStartSegment = getSegmentAtOffset(layout, input.scrollTop - input.viewportHeight * 0.2);
+  const visibleEndSegment = getSegmentAtOffset(layout, input.scrollTop + input.viewportHeight * 1.1);
+
+  const anchorIndex = anchorSegment?.order ?? 0;
+  const visibleStart = visibleStartSegment?.order ?? anchorIndex;
+  const visibleEnd = visibleEndSegment?.order ?? anchorIndex;
+
+  const hotLead = input.direction === 'forward' ? 4 : 2;
+  const hotTrail = input.direction === 'backward' ? 4 : 2;
+  const warmLead = input.direction === 'forward' ? 8 : 5;
+  const warmTrail = input.direction === 'backward' ? 8 : 5;
+
+  const hotStart = clamp(visibleStart - hotTrail, 0, lastIndex);
+  const hotEnd = clamp(visibleEnd + hotLead, 0, lastIndex);
+  const warmStart = clamp(hotStart - warmTrail, 0, lastIndex);
+  const warmEnd = clamp(hotEnd + warmLead, 0, lastIndex);
+
+  return {
+    anchorIndex,
+    visibleStart,
+    visibleEnd,
+    hotStart,
+    hotEnd,
+    warmStart,
+    warmEnd
+  };
+}
+
+export function getSegmentRenderMode(
+  renderWindow: ReaderRenderWindow,
+  segmentIndex: number
+): ReaderSegmentRenderMode {
+  if (segmentIndex >= renderWindow.hotStart && segmentIndex <= renderWindow.hotEnd) {
+    return 'hot';
+  }
+
+  if (segmentIndex >= renderWindow.warmStart && segmentIndex <= renderWindow.warmEnd) {
+    return 'warm';
+  }
+
+  return 'cold';
+}

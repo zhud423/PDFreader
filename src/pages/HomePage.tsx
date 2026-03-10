@@ -8,14 +8,25 @@ import { subscribeLibraryChanged } from '../services/libraryEvents';
 import {
   libraryService,
   type HomeOverview,
-  type ImportResult
+  type ImportResult,
+  type RemoteSourceSyncResult,
+  type SourceSummary
 } from '../services/libraryService';
-import { formatProgressSummary, formatRelativeTime } from '../shared/utils/format';
+import {
+  formatProgressSummary,
+  formatRelativeTime,
+  formatSourceStatusLabel
+} from '../shared/utils/format';
 
 interface HomeFeedback {
   summary: string;
   details: string[];
   tone: 'normal' | 'warning';
+}
+
+interface SourceDraft {
+  name: string;
+  baseUrl: string;
 }
 
 function buildImportFeedback(result: ImportResult): HomeFeedback {
@@ -41,17 +52,65 @@ function buildImportFeedback(result: ImportResult): HomeFeedback {
   };
 }
 
-interface BookCardProps {
-  book: BookWithProgress;
-  actionLabel: string;
-  description: string;
-  onAction: (book: BookWithProgress) => void;
+function buildRemoteSourceFeedback(result: RemoteSourceSyncResult): HomeFeedback {
+  if (result.validation.status !== 'ready') {
+    return {
+      summary: `${result.source.name} 已保存，但当前不可用`,
+      details: [result.validation.reason ?? '请确认局域网地址、HTTPS 配置和 library.json 是否可访问。'],
+      tone: 'warning'
+    };
+  }
+
+  const details = [
+    `同步书籍 ${result.totalBooks} 本`,
+    `新增 ${result.importedCount} 本`,
+    `更新 ${result.updatedCount} 本`
+  ];
+
+  if (result.missingCount > 0) {
+    details.push(`标记失效 ${result.missingCount} 本`);
+  }
+
+  return {
+    summary: `${result.source.name} 已同步`,
+    details,
+    tone: 'normal'
+  };
 }
 
-function BookCard({ book, actionLabel, description, onAction }: BookCardProps) {
+function getBookDescription(book: BookWithProgress): string {
+  if (book.availabilityStatus !== 'available') {
+    if (book.sourceType === 'remote_url') {
+      return book.availabilityReason ?? '远程书源当前不可用，可重试同步。';
+    }
+
+    return book.availabilityReason ?? '来源当前不可用，需重新关联原文件。';
+  }
+
+  if (book.sourceType === 'remote_url') {
+    return '来自局域网 URL 书源，可直接通过远程地址打开。';
+  }
+
+  return '当前会话内仍保留文件访问能力，可直接恢复阅读。';
+}
+
+function getBookActionLabel(book: BookWithProgress): string {
+  if (book.availabilityStatus === 'available') {
+    return '打开阅读器';
+  }
+
+  return book.sourceType === 'remote_url' ? '重试连接' : '重新选择文件';
+}
+
+interface BookCardProps {
+  book: BookWithProgress;
+  onAction: (book: BookWithProgress) => void | Promise<void>;
+}
+
+function BookCard({ book, onAction }: BookCardProps) {
   return (
     <article className="book-card">
-      <CoverImage bookId={book.bookId} title={book.displayTitle} />
+      <CoverImage bookId={book.bookId} title={book.displayTitle} coverRef={book.coverRef} />
       <div className="book-card__body">
         <div className="book-card__heading">
           <h3>{book.displayTitle}</h3>
@@ -60,9 +119,42 @@ function BookCard({ book, actionLabel, description, onAction }: BookCardProps) {
         <p>{book.fileName}</p>
         <p>上次阅读：{formatRelativeTime(book.lastOpenedAt ?? book.updatedAt)}</p>
         <p>进度：{formatProgressSummary(book.progress)}</p>
-        <p className="muted-text">{description}</p>
-        <button className="action-button" onClick={() => onAction(book)}>
-          {actionLabel}
+        <p className="muted-text">{getBookDescription(book)}</p>
+        <button className="action-button" onClick={() => void onAction(book)}>
+          {getBookActionLabel(book)}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+interface SourceCardProps {
+  source: SourceSummary;
+  syncing: boolean;
+  onRefresh: (source: SourceSummary) => void | Promise<void>;
+}
+
+function SourceCard({ source, syncing, onRefresh }: SourceCardProps) {
+  return (
+    <article className="source-card">
+      <div className="source-card__header">
+        <div>
+          <h3>{source.name}</h3>
+          <p className="muted-text">{source.baseUrl}</p>
+        </div>
+        <span className={`source-status-chip is-${source.status}`}>
+          {formatSourceStatusLabel(source.status)}
+        </span>
+      </div>
+      <div className="source-card__metrics">
+        <span>{source.totalBooks} 本书</span>
+        <span>{source.availableBooks} 本可读</span>
+        <span>{source.unavailableBooks} 本不可用</span>
+      </div>
+      <p className="muted-text">最近同步：{formatRelativeTime(source.updatedAt)}</p>
+      <div className="button-row">
+        <button className="action-button" onClick={() => void onRefresh(source)} disabled={syncing}>
+          {syncing ? '正在同步...' : '立即同步'}
         </button>
       </div>
     </article>
@@ -79,6 +171,8 @@ export function HomePage() {
   const [isImporting, setIsImporting] = useState(false);
   const [feedback, setFeedback] = useState<HomeFeedback | null>(null);
   const [relinkBookId, setRelinkBookId] = useState<string | null>(null);
+  const [sourceDraft, setSourceDraft] = useState<SourceDraft>({ name: '', baseUrl: '' });
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,16 +213,6 @@ export function HomePage() {
     }
   };
 
-  const handleOpenBook = (book: BookWithProgress) => {
-    if (book.availabilityStatus !== 'available') {
-      setRelinkBookId(book.bookId);
-      relinkInputRef.current?.click();
-      return;
-    }
-
-    navigate(`/reader/${book.bookId}`);
-  };
-
   const handleRelink = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file || !relinkBookId) {
@@ -152,6 +236,86 @@ export function HomePage() {
     } finally {
       setRelinkBookId(null);
     }
+  };
+
+  const handleRemoteSourceSubmit = async () => {
+    if (!sourceDraft.baseUrl.trim()) {
+      setFeedback({
+        summary: '请先填写局域网书源 URL',
+        details: ['示例：https://nas-home.example.com/comics'],
+        tone: 'warning'
+      });
+      return;
+    }
+
+    setSyncingSourceId('new');
+    setFeedback(null);
+
+    try {
+      const result = await libraryService.syncRemoteUrlSource(sourceDraft);
+      setFeedback(buildRemoteSourceFeedback(result));
+      if (result.validation.status === 'ready') {
+        setSourceDraft({ name: '', baseUrl: '' });
+      }
+    } catch (error) {
+      setFeedback({
+        summary: error instanceof Error ? error.message : '添加远程书源失败',
+        details: [],
+        tone: 'warning'
+      });
+    } finally {
+      setSyncingSourceId(null);
+    }
+  };
+
+  const handleRefreshSource = async (source: SourceSummary) => {
+    setSyncingSourceId(source.sourceInstanceId);
+    setFeedback(null);
+
+    try {
+      const result = await libraryService.refreshRemoteSource(source.sourceInstanceId);
+      setFeedback(buildRemoteSourceFeedback(result));
+    } catch (error) {
+      setFeedback({
+        summary: error instanceof Error ? error.message : '刷新远程书源失败',
+        details: [],
+        tone: 'warning'
+      });
+    } finally {
+      setSyncingSourceId(null);
+    }
+  };
+
+  const handleBookAction = async (book: BookWithProgress) => {
+    if (book.availabilityStatus === 'available') {
+      navigate(`/reader/${book.bookId}`);
+      return;
+    }
+
+    if (book.sourceType === 'remote_url') {
+      setSyncingSourceId(book.sourceInstanceId);
+
+      try {
+        const result = await libraryService.refreshRemoteSource(book.sourceInstanceId);
+        setFeedback(buildRemoteSourceFeedback(result));
+
+        if (result.validation.status === 'ready') {
+          navigate(`/reader/${book.bookId}`);
+        }
+      } catch (error) {
+        setFeedback({
+          summary: error instanceof Error ? error.message : '远程书源重试失败',
+          details: [],
+          tone: 'warning'
+        });
+      } finally {
+        setSyncingSourceId(null);
+      }
+      return;
+    }
+
+    setRelinkBookId(book.bookId);
+    relinkInputRef.current?.click();
   };
 
   const handleInstall = async () => {
@@ -178,6 +342,9 @@ export function HomePage() {
   const continueReading = overview?.continueReading ?? null;
   const availableBooks = overview?.availableBooks ?? [];
   const unavailableBooks = overview?.unavailableBooks ?? [];
+  const remoteSources = (overview?.sourceSummaries ?? []).filter((source) => source.sourceType === 'remote_url');
+  const unavailableTitle =
+    unavailableBooks.some((book) => book.sourceType === 'remote_url') ? '当前不可用的条目' : '需要重新选择文件';
 
   return (
     <main className="app-shell">
@@ -217,9 +384,7 @@ export function HomePage() {
         <div>
           <p className="eyebrow">© 2026 小宝专用. All rights reserved.</p>
           <h1>漫画阅读器</h1>
-          <p className="hero-copy">
-            专门用于小黄漫的长漫，竖向阅读
-          </p>
+          <p className="hero-copy">专门用于小黄漫的长漫，竖向阅读</p>
           <div className="hero-actions">
             <button className="action-button action-button--primary" onClick={() => singleInputRef.current?.click()}>
               导入 PDF
@@ -272,13 +437,74 @@ export function HomePage() {
 
       <section className="content-block">
         <div className="section-heading">
+          <h2>局域网 URL 书源</h2>
+          <span>P2 开始接入远程 library.json</span>
+        </div>
+
+        <div className="source-form">
+          <label className="field">
+            <span>书源名称</span>
+            <input
+              value={sourceDraft.name}
+              placeholder="例如：家里 NAS"
+              onChange={(event) => setSourceDraft((current) => ({ ...current, name: event.target.value }))}
+            />
+          </label>
+          <label className="field field--wide">
+            <span>书源 URL</span>
+            <input
+              value={sourceDraft.baseUrl}
+              placeholder="https://nas-home.example.com/comics"
+              onChange={(event) =>
+                setSourceDraft((current) => ({ ...current, baseUrl: event.target.value }))
+              }
+            />
+          </label>
+          <button
+            className="action-button action-button--primary"
+            onClick={() => void handleRemoteSourceSubmit()}
+            disabled={syncingSourceId === 'new'}
+          >
+            {syncingSourceId === 'new' ? '正在连接...' : '添加并同步'}
+          </button>
+        </div>
+
+        <p className="muted-text">
+          当前协议要求根目录可访问 library.json，其中每本书需声明 canonicalKey、pdfPath、页数和首页尺寸。公开测试时建议书源同时满足 HTTPS 和 CORS。
+        </p>
+
+        {remoteSources.length > 0 ? (
+          <div className="source-grid">
+            {remoteSources.map((source) => (
+              <SourceCard
+                key={source.sourceInstanceId}
+                source={source}
+                syncing={syncingSourceId === source.sourceInstanceId}
+                onRefresh={handleRefreshSource}
+              />
+            ))}
+          </div>
+        ) : (
+          <article className="empty-panel">
+            <h3>还没有局域网书源</h3>
+            <p>先添加一个可访问的 HTTPS 目录，之后首页会把远程书和本地书放在同一套书库模型里。</p>
+          </article>
+        )}
+      </section>
+
+      <section className="content-block">
+        <div className="section-heading">
           <h2>{continueReading?.progress ? '继续阅读' : '最近添加'}</h2>
           <span>首页首屏固定聚焦主阅读路径</span>
         </div>
 
         {continueReading ? (
           <article className="continue-card">
-            <CoverImage bookId={continueReading.bookId} title={continueReading.displayTitle} />
+            <CoverImage
+              bookId={continueReading.bookId}
+              title={continueReading.displayTitle}
+              coverRef={continueReading.coverRef}
+            />
             <div className="continue-card__body">
               <div className="continue-card__title-row">
                 <h3>{continueReading.displayTitle}</h3>
@@ -286,14 +512,17 @@ export function HomePage() {
               </div>
               <p>上次阅读：{formatRelativeTime(continueReading.lastOpenedAt ?? continueReading.updatedAt)}</p>
               <p>进度：{formatProgressSummary(continueReading.progress)}</p>
-              <p className="muted-text">
-                {continueReading.availabilityStatus === 'available'
-                  ? '来源仍可访问，可直接回到上次阅读位置。'
-                  : continueReading.availabilityReason ?? '当前需重新选择原文件后继续阅读。'}
-              </p>
+              <p className="muted-text">{getBookDescription(continueReading)}</p>
               <div className="button-row">
-                <button className="action-button action-button--primary" onClick={() => handleOpenBook(continueReading)}>
-                  {continueReading.availabilityStatus === 'available' ? '继续阅读' : '重新选择文件'}
+                <button
+                  className="action-button action-button--primary"
+                  onClick={() => void handleBookAction(continueReading)}
+                >
+                  {continueReading.availabilityStatus === 'available'
+                    ? '继续阅读'
+                    : continueReading.sourceType === 'remote_url'
+                      ? '重试连接'
+                      : '重新选择文件'}
                 </button>
                 <button className="action-button" onClick={() => multiInputRef.current?.click()}>
                   再导入几本
@@ -304,7 +533,7 @@ export function HomePage() {
         ) : (
           <article className="empty-panel">
             <h3>先导入第一本 PDF</h3>
-            <p>当前书库为空。P1 先把“导入 -&gt; 阅读 -&gt; 继续阅读”闭环跑通。</p>
+            <p>当前书库为空。P2 仍然保持“导入 / 同步 -&gt; 阅读 -&gt; 继续阅读”作为主闭环。</p>
           </article>
         )}
       </section>
@@ -318,19 +547,13 @@ export function HomePage() {
         {availableBooks.length > 0 ? (
           <div className="book-grid">
             {availableBooks.map((book) => (
-              <BookCard
-                key={book.bookId}
-                book={book}
-                actionLabel="打开阅读器"
-                description="当前会话内仍保留文件访问能力，可直接恢复阅读。"
-                onAction={handleOpenBook}
-              />
+              <BookCard key={book.bookId} book={book} onAction={handleBookAction} />
             ))}
           </div>
         ) : (
           <article className="empty-panel">
             <h3>当前没有可直接打开的条目</h3>
-            <p>如果你刚刷新过页面，这是预期行为。P1 不保存 PDF 副本，只保留元数据、封面和进度。</p>
+            <p>如果你刚刷新过页面，本地上传条目会失去会话句柄；远程 URL 书源同步成功后则可以直接继续打开。</p>
           </article>
         )}
       </section>
@@ -338,19 +561,13 @@ export function HomePage() {
       {unavailableBooks.length > 0 ? (
         <section className="content-block">
           <div className="section-heading">
-            <h2>需要重新选择文件</h2>
+            <h2>{unavailableTitle}</h2>
             <span>{unavailableBooks.length} 本</span>
           </div>
 
           <div className="book-grid">
             {unavailableBooks.map((book) => (
-              <BookCard
-                key={book.bookId}
-                book={book}
-                actionLabel="重新选择文件"
-                description={book.availabilityReason ?? '来源当前不可用，需重新关联原文件。'}
-                onAction={handleOpenBook}
-              />
+              <BookCard key={book.bookId} book={book} onAction={handleBookAction} />
             ))}
           </div>
         </section>

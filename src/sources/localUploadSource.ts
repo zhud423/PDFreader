@@ -18,7 +18,7 @@ class LocalUploadSourceAdapter implements SourceAdapter {
       throw new Error('本地源文件已失去访问能力，请重新选择文件。');
     }
 
-    return { data: await file.arrayBuffer() };
+    return { kind: 'data', data: await file.arrayBuffer() };
   }
 
   async revalidate(book: BookRecord): Promise<AvailabilitySnapshot> {
@@ -34,4 +34,3 @@ class LocalUploadSourceAdapter implements SourceAdapter {
 }
 
 export const localUploadSource = new LocalUploadSourceAdapter();
-

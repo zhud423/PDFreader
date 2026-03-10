@@ -4,12 +4,23 @@ import { libraryService } from '../services/libraryService';
 interface CoverImageProps {
   bookId: string;
   title: string;
+  coverRef?: string | null;
 }
 
-export function CoverImage({ bookId, title }: CoverImageProps) {
+function isRemoteCover(coverRef?: string | null): coverRef is string {
+  return typeof coverRef === 'string' && /^https?:\/\//.test(coverRef);
+}
+
+export function CoverImage({ bookId, title, coverRef }: CoverImageProps) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (isRemoteCover(coverRef)) {
+      setUrl(coverRef);
+      return;
+    }
+
+    setUrl(null);
     let isMounted = true;
     let objectUrl: string | null = null;
 
@@ -28,7 +39,7 @@ export function CoverImage({ bookId, title }: CoverImageProps) {
         URL.revokeObjectURL(objectUrl);
       }
     };
-  }, [bookId]);
+  }, [bookId, coverRef]);
 
   if (!url) {
     return (
@@ -40,4 +51,3 @@ export function CoverImage({ bookId, title }: CoverImageProps) {
 
   return <img className="cover-image" src={url} alt={`${title} 封面`} loading="lazy" />;
 }
-

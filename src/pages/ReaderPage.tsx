@@ -6,31 +6,62 @@ import { getDocument, type PDFDocumentProxy } from '../lib/pdf/pdf';
 import {
   buildReaderLayout,
   findSegmentForScroll,
+  getSegmentRenderMode,
+  resolveProgressScrollTop,
   resolveProgressSegment,
+  resolveRenderWindow,
   type ReaderLayout,
-  type ReaderSegment
+  type ReaderRenderWindow,
+  type ReaderScrollDirection,
+  type ReaderSegment,
+  type ReaderSegmentRenderMode
 } from '../lib/reader/segmentPlanner';
 import { StatusBadge } from '../components/StatusBadge';
 import { libraryService, type ReaderSession } from '../services/libraryService';
 
+interface RenderReport {
+  segmentId: string;
+  durationMs: number;
+  qualityScale: number;
+}
+
+const TAP_STEP_RATIO = 0.9;
+const TAP_ZONE_RATIO = 1 / 3;
+
 interface RenderedSegmentProps {
   pdf: PDFDocumentProxy;
   segment: ReaderSegment;
-  isActive: boolean;
-  reportRenderedRef: MutableRefObject<(segmentId: string) => void>;
+  renderMode: ReaderSegmentRenderMode;
+  reportRenderedRef: MutableRefObject<(report: RenderReport) => void>;
 }
 
 function isRenderingCancelledError(value: unknown): boolean {
   return value instanceof Error && value.name === 'RenderingCancelledException';
 }
 
+function buildRenderScaleCandidates(): number[] {
+  const devicePixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+  const candidates = [devicePixelRatio, Math.min(1.5, devicePixelRatio), 1];
+
+  return Array.from(new Set(candidates.map((value) => Number(value.toFixed(2))))).sort((a, b) => b - a);
+}
+
+function clearCanvas(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext('2d');
+  context?.clearRect(0, 0, canvas.width, canvas.height);
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 function RenderedSegment({
   pdf,
   segment,
-  isActive,
+  renderMode,
   reportRenderedRef
 }: RenderedSegmentProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderSignatureRef = useRef<string>('');
+  const renderRunRef = useRef(0);
   const [renderState, setRenderState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -41,55 +72,98 @@ function RenderedSegment({
       return;
     }
 
-    if (!isActive) {
-      const context = canvas.getContext('2d');
-      context?.clearRect(0, 0, canvas.width, canvas.height);
-      canvas.width = 0;
-      canvas.height = 0;
+    const renderSignature = `${segment.id}:${Math.round(segment.scale * 1000)}:${Math.round(segment.width)}x${Math.round(segment.height)}`;
+
+    if (renderMode === 'cold') {
+      renderSignatureRef.current = '';
+      clearCanvas(canvas);
       setRenderState('idle');
       setError(null);
       return;
     }
 
+    if (renderSignatureRef.current === renderSignature) {
+      return;
+    }
+
+    const runId = renderRunRef.current + 1;
+    renderRunRef.current = runId;
     let cancelled = false;
     let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
+    const isStaleRun = () => cancelled || runId !== renderRunRef.current;
 
     const render = async () => {
       setRenderState('loading');
+      setError(null);
+
       const page = await pdf.getPage(segment.pageNumber);
-      const devicePixelRatio = window.devicePixelRatio || 1;
-      const viewport = page.getViewport({ scale: segment.scale * devicePixelRatio });
-      const translateY = Math.round(segment.offsetY * devicePixelRatio);
-      canvas.width = Math.max(1, Math.round(segment.width * devicePixelRatio));
-      canvas.height = Math.max(1, Math.round(segment.height * devicePixelRatio));
-      canvas.style.width = `${Math.round(segment.width)}px`;
-      canvas.style.height = `${Math.round(segment.height)}px`;
-      const context = canvas.getContext('2d');
+      const candidates = buildRenderScaleCandidates();
+      const startedAt = performance.now();
+      let lastError: unknown = null;
 
-      if (!context) {
-        throw new Error('无法创建分段渲染上下文。');
+      try {
+        if (isStaleRun()) {
+          return;
+        }
+
+        for (const qualityScale of candidates) {
+          if (isStaleRun()) {
+            return;
+          }
+
+          const viewport = page.getViewport({ scale: segment.scale * qualityScale });
+          const translateY = Math.round(segment.offsetY * qualityScale);
+          canvas.width = Math.max(1, Math.round(segment.width * qualityScale));
+          canvas.height = Math.max(1, Math.round(segment.height * qualityScale));
+          canvas.style.width = `${Math.round(segment.width)}px`;
+          canvas.style.height = `${Math.round(segment.height)}px`;
+
+          const context = canvas.getContext('2d');
+          if (!context) {
+            throw new Error('无法创建分段渲染上下文。');
+          }
+
+          context.setTransform(1, 0, 0, 1, 0, 0);
+          context.clearRect(0, 0, canvas.width, canvas.height);
+
+          try {
+            renderTask = page.render({
+              canvasContext: context,
+              viewport,
+              transform: [1, 0, 0, 1, 0, -translateY]
+            });
+            await renderTask.promise;
+
+            if (isStaleRun()) {
+              return;
+            }
+
+            renderSignatureRef.current = renderSignature;
+            setRenderState('ready');
+            reportRenderedRef.current({
+              segmentId: segment.id,
+              durationMs: performance.now() - startedAt,
+              qualityScale
+            });
+            return;
+          } catch (value: unknown) {
+            if (isRenderingCancelledError(value) || cancelled) {
+              throw value;
+            }
+
+            lastError = value;
+            clearCanvas(canvas);
+          }
+        }
+      } finally {
+        page.cleanup();
       }
 
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.clearRect(0, 0, canvas.width, canvas.height);
-
-      renderTask = page.render({
-        canvasContext: context,
-        viewport,
-        transform: [1, 0, 0, 1, 0, -translateY]
-      });
-      await renderTask.promise;
-      page.cleanup();
-
-      if (!cancelled) {
-        setRenderState('ready');
-        setError(null);
-        reportRenderedRef.current(segment.id);
-      }
+      throw lastError ?? new Error('分段渲染失败');
     };
 
     void render().catch((value: unknown) => {
-      if (!cancelled && !isRenderingCancelledError(value)) {
+      if (!isStaleRun() && !isRenderingCancelledError(value)) {
         setRenderState('error');
         setError(value instanceof Error ? value.message : '分段渲染失败');
       }
@@ -97,11 +171,12 @@ function RenderedSegment({
 
     return () => {
       cancelled = true;
+      renderRunRef.current += 1;
       renderTask?.cancel();
     };
   }, [
-    isActive,
     pdf,
+    renderMode,
     reportRenderedRef,
     segment.height,
     segment.id,
@@ -111,16 +186,18 @@ function RenderedSegment({
     segment.width
   ]);
 
+  const shouldKeepCanvas = renderMode !== 'cold';
+
   return (
     <section
-      className="reader-segment-shell"
+      className={`reader-segment-shell ${segment.pageNumber > 1 && segment.segmentIndex === 0 ? 'is-page-start' : ''}`}
       style={{ height: `${segment.height + segment.gapBefore}px`, paddingTop: `${segment.gapBefore}px` }}
     >
       <div className="reader-segment-frame" style={{ width: `${segment.width}px`, height: `${segment.height}px` }}>
-        {isActive && renderState !== 'ready' ? (
-          <div className={`reader-segment-placeholder ${isActive ? 'is-loading' : ''}`} />
+        {shouldKeepCanvas && renderState !== 'ready' ? (
+          <div className={`reader-segment-placeholder ${renderState === 'loading' ? 'is-loading' : ''}`} />
         ) : null}
-        {isActive ? <canvas ref={canvasRef} className="reader-segment-canvas" /> : null}
+        {shouldKeepCanvas ? <canvas ref={canvasRef} className="reader-segment-canvas" /> : null}
         {error ? <div className="reader-inline-message reader-inline-message--overlay">{error}</div> : null}
       </div>
     </section>
@@ -133,6 +210,24 @@ interface ReaderViewportProps {
   zoomScale: number;
   onToggleChrome: () => void;
   onZoomChange: (next: number) => void;
+}
+
+function createRestoreWindow(layout: ReaderLayout, segment: ReaderSegment): ReaderRenderWindow {
+  const lastIndex = Math.max(0, layout.segments.length - 1);
+  const hotStart = Math.max(0, segment.order - 1);
+  const hotEnd = Math.min(lastIndex, segment.order + 2);
+  const warmStart = Math.max(0, hotStart - 3);
+  const warmEnd = Math.min(lastIndex, hotEnd + 4);
+
+  return {
+    anchorIndex: segment.order,
+    visibleStart: segment.order,
+    visibleEnd: segment.order,
+    hotStart,
+    hotEnd,
+    warmStart,
+    warmEnd
+  };
 }
 
 function ReaderViewport({
@@ -148,7 +243,8 @@ function ReaderViewport({
   const saveTimerRef = useRef<number | null>(null);
   const lastProgressRef = useRef<ProgressRecord | null>(session.progress);
   const restoredRef = useRef(false);
-  const reportRenderedRef = useRef<(segmentId: string) => void>(() => {});
+  const reportRenderedRef = useRef<(report: RenderReport) => void>(() => {});
+  const lastScrollTopRef = useRef(0);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [layout, setLayout] = useState<ReaderLayout | null>(null);
   const [viewportSnapshot, setViewportSnapshot] = useState({
@@ -161,14 +257,21 @@ function ReaderViewport({
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [renderTick, setRenderTick] = useState(0);
+  const [scrollDirection, setScrollDirection] = useState<ReaderScrollDirection>('idle');
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadDurationMs, setLoadDurationMs] = useState<number | null>(null);
+  const [lastRenderMetric, setLastRenderMetric] = useState<{ durationMs: number; qualityScale: number } | null>(null);
 
-  reportRenderedRef.current = (segmentId: string) => {
-    if (renderedSegmentsRef.current.has(segmentId)) {
-      return;
+  reportRenderedRef.current = (report) => {
+    if (!renderedSegmentsRef.current.has(report.segmentId)) {
+      renderedSegmentsRef.current.add(report.segmentId);
+      setRenderTick((value) => value + 1);
     }
 
-    renderedSegmentsRef.current.add(segmentId);
-    setRenderTick((value) => value + 1);
+    setLastRenderMetric({
+      durationMs: Math.round(report.durationMs),
+      qualityScale: report.qualityScale
+    });
   };
 
   useEffect(() => {
@@ -176,13 +279,17 @@ function ReaderViewport({
     let activePdf: PDFDocumentProxy | null = null;
 
     const loadDocument = async () => {
-      if (!session.data) {
+      if (!session.documentSource) {
         setLoadState('error');
         setLoadError('当前没有可用的 PDF 数据。');
         return;
       }
 
-      const task = getDocument({ data: session.data.slice(0) });
+      const startedAt = performance.now();
+      const task =
+        session.documentSource.kind === 'data'
+          ? getDocument({ data: session.documentSource.data.slice(0) })
+          : getDocument(session.documentSource.url);
       const loadedPdf = await task.promise;
       activePdf = loadedPdf;
 
@@ -192,10 +299,14 @@ function ReaderViewport({
       }
 
       setPdf(loadedPdf);
+      setLoadDurationMs(Math.round(performance.now() - startedAt));
       setLoadError(null);
     };
 
+    setPdf(null);
+    setLayout(null);
     setLoadState('loading');
+    setLoadError(null);
     void loadDocument().catch((error) => {
       if (!cancelled) {
         setLoadState('error');
@@ -209,7 +320,7 @@ function ReaderViewport({
         void activePdf.destroy();
       }
     };
-  }, [session.data]);
+  }, [loadAttempt, session.documentSource]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -236,6 +347,7 @@ function ReaderViewport({
       height: container.clientHeight,
       scrollTop: container.scrollTop
     });
+    lastScrollTopRef.current = container.scrollTop;
 
     return () => observer.disconnect();
   }, []);
@@ -279,7 +391,8 @@ function ReaderViewport({
       return;
     }
 
-    const initialSegment = resolveProgressSegment(layout, session.progress);
+    const restoreProgress = lastProgressRef.current ?? session.progress;
+    const initialSegment = resolveProgressSegment(layout, restoreProgress);
     if (!initialSegment) {
       return;
     }
@@ -288,11 +401,11 @@ function ReaderViewport({
       bookId: session.book.bookId,
       pageIndex: initialSegment.pageIndex,
       segmentIndex: initialSegment.segmentIndex,
-      scrollOffsetWithinSegment: session.progress?.scrollOffsetWithinSegment ?? 0,
+      scrollOffsetWithinSegment: restoreProgress?.scrollOffsetWithinSegment ?? 0,
       zoomScale,
       viewportWidth: viewportSnapshot.width,
       viewportHeight: viewportSnapshot.height,
-      restoreStrategyVersion: 1,
+      restoreStrategyVersion: 2,
       updatedAt: new Date().toISOString()
     };
   }, [layout, session.book.bookId, session.progress, viewportSnapshot.height, viewportSnapshot.width, zoomScale]);
@@ -316,6 +429,15 @@ function ReaderViewport({
     const updateProgress = () => {
       rafId = 0;
       const scrollTop = container.scrollTop;
+      const delta = scrollTop - lastScrollTopRef.current;
+      lastScrollTopRef.current = scrollTop;
+
+      if (delta > 10) {
+        setScrollDirection('forward');
+      } else if (delta < -10) {
+        setScrollDirection('backward');
+      }
+
       const activeSegment = findSegmentForScroll(layout, scrollTop);
 
       setViewportSnapshot((previous) =>
@@ -336,7 +458,7 @@ function ReaderViewport({
         zoomScale,
         viewportWidth: container.clientWidth,
         viewportHeight: container.clientHeight,
-        restoreStrategyVersion: 1,
+        restoreStrategyVersion: 2,
         updatedAt: new Date().toISOString()
       };
 
@@ -391,7 +513,8 @@ function ReaderViewport({
 
     lastProgressRef.current = {
       ...lastProgressRef.current,
-      zoomScale
+      zoomScale,
+      restoreStrategyVersion: 2
     };
   }, [zoomScale]);
 
@@ -401,12 +524,28 @@ function ReaderViewport({
     setRenderTick(0);
   }, [layout]);
 
+  const pendingRestoreProgress = !restoredRef.current ? lastProgressRef.current ?? session.progress : null;
+  const pendingRestoreSegment =
+    layout && pendingRestoreProgress ? resolveProgressSegment(layout, pendingRestoreProgress) : null;
+
+  const renderWindow =
+    layout && pendingRestoreSegment
+      ? createRestoreWindow(layout, pendingRestoreSegment)
+      : layout
+        ? resolveRenderWindow(layout, {
+            scrollTop: viewportSnapshot.scrollTop,
+            viewportHeight: viewportSnapshot.height,
+            direction: scrollDirection
+          })
+        : null;
+
   useEffect(() => {
     if (!layout || restoredRef.current) {
       return;
     }
 
-    const targetSegment = resolveProgressSegment(layout, session.progress);
+    const restoreProgress = lastProgressRef.current ?? session.progress;
+    const targetSegment = resolveProgressSegment(layout, restoreProgress);
     if (!targetSegment) {
       return;
     }
@@ -420,22 +559,38 @@ function ReaderViewport({
       return;
     }
 
-    const targetTop = targetSegment.top + (session.progress?.scrollOffsetWithinSegment ?? 0);
+    const targetTop = resolveProgressScrollTop(layout, restoreProgress);
     container.scrollTo({
       top: targetTop,
       behavior: 'auto'
     });
+    lastScrollTopRef.current = targetTop;
     setViewportSnapshot((previous) => ({ ...previous, scrollTop: targetTop }));
     setCurrentPage(targetSegment.pageNumber);
     setCurrentSegment(targetSegment.segmentIndex + 1);
     restoredRef.current = true;
-  }, [layout, renderTick, session.progress]);
+    setScrollDirection('idle');
+
+    lastProgressRef.current = {
+      bookId: session.book.bookId,
+      pageIndex: targetSegment.pageIndex,
+      segmentIndex: targetSegment.segmentIndex,
+      scrollOffsetWithinSegment: Math.max(0, targetTop - targetSegment.top),
+      zoomScale,
+      viewportWidth: container.clientWidth,
+      viewportHeight: container.clientHeight,
+      restoreStrategyVersion: 2,
+      updatedAt: new Date().toISOString()
+    };
+
+    void flushProgress();
+  }, [layout, renderTick, session.book.bookId, session.progress, zoomScale]);
 
   useEffect(() => {
     void libraryService.markBookOpened(session.book.bookId);
   }, [session.book.bookId]);
 
-  if (session.book.availabilityStatus !== 'available' || !session.data) {
+  if (session.book.availabilityStatus !== 'available' || !session.documentSource) {
     return (
       <section className="reader-fallback">
         <div className="reader-fallback__panel">
@@ -450,9 +605,46 @@ function ReaderViewport({
     );
   }
 
-  const activeTop = viewportSnapshot.scrollTop - viewportSnapshot.height * 1.25;
-  const activeBottom = viewportSnapshot.scrollTop + viewportSnapshot.height * 2.5;
+  const hotCount = renderWindow ? renderWindow.hotEnd - renderWindow.hotStart + 1 : 0;
+  const warmCount = renderWindow
+    ? Math.max(0, renderWindow.warmEnd - renderWindow.warmStart + 1 - hotCount)
+    : 0;
   const totalPages = layout?.pages.length ?? session.book.pageCount;
+
+  const handleViewportTap = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button,a,input')) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const offsetY = event.clientY - rect.top;
+    const topZoneMax = rect.height * TAP_ZONE_RATIO;
+    const bottomZoneMin = rect.height * (1 - TAP_ZONE_RATIO);
+
+    if (offsetY <= topZoneMax) {
+      container.scrollBy({
+        top: -Math.max(180, Math.round(rect.height * TAP_STEP_RATIO)),
+        behavior: 'smooth'
+      });
+      return;
+    }
+
+    if (offsetY >= bottomZoneMin) {
+      container.scrollBy({
+        top: Math.max(180, Math.round(rect.height * TAP_STEP_RATIO)),
+        behavior: 'smooth'
+      });
+      return;
+    }
+
+    onToggleChrome();
+  };
 
   return (
     <div className="reader-shell">
@@ -476,44 +668,40 @@ function ReaderViewport({
         </div>
       </header>
 
-      <div
-        ref={containerRef}
-        className="reader-viewport"
-        onClick={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest('button,a,input')) {
-            return;
-          }
-
-          onToggleChrome();
-        }}
-      >
+      <div ref={containerRef} className="reader-viewport" onClick={handleViewportTap}>
         {loadState === 'loading' ? <div className="reader-inline-message">正在规划页面分段并准备渲染...</div> : null}
-        {loadError ? <div className="reader-inline-message">{loadError}</div> : null}
+        {loadError ? (
+          <div className="reader-inline-message reader-inline-message--stacked">
+            <span>{loadError}</span>
+            <button className="action-button" onClick={() => setLoadAttempt((value) => value + 1)}>
+              重试加载
+            </button>
+          </div>
+        ) : null}
 
-        {layout ? (
+        {layout && pdf ? (
           <div className="reader-document" style={{ minHeight: `${layout.totalHeight}px` }}>
-            {layout.segments.map((segment) => {
-              const isActive =
-                segment.top + segment.height >= activeTop && segment.top <= activeBottom;
-
-              return (
-                <RenderedSegment
-                  key={segment.id}
-                  pdf={pdf!}
-                  segment={segment}
-                  isActive={isActive}
-                  reportRenderedRef={reportRenderedRef}
-                />
-              );
-            })}
+            {layout.segments.map((segment) => (
+              <RenderedSegment
+                key={segment.id}
+                pdf={pdf}
+                segment={segment}
+                renderMode={renderWindow ? getSegmentRenderMode(renderWindow, segment.order) : 'cold'}
+                reportRenderedRef={reportRenderedRef}
+              />
+            ))}
           </div>
         ) : null}
       </div>
 
       <footer className={`reader-statusbar ${chromeVisible ? 'is-visible' : ''}`}>
-        <span>分段渲染已启用</span>
-        <span>{layout ? `目标段高 ${Math.round(layout.segmentTargetHeight)}px` : '正在计算布局'}</span>
+        <span>{`热区 ${hotCount} 段 · 温区 ${warmCount} 段`}</span>
+        <span>
+          {lastRenderMetric
+            ? `上次渲染 ${lastRenderMetric.durationMs}ms · x${lastRenderMetric.qualityScale}`
+            : '等待首段渲染'}
+        </span>
+        <span>{loadDurationMs ? `首开 ${loadDurationMs}ms` : '正在计算布局'}</span>
       </footer>
     </div>
   );
@@ -530,6 +718,7 @@ export function ReaderPage() {
   const [zoomScale, setZoomScale] = useState(1);
   const [chromeVisible, setChromeVisible] = useState(true);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
+  const [isRecovering, setIsRecovering] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,11 +753,6 @@ export function ReaderPage() {
     return () => window.clearTimeout(timer);
   }, [chromeVisible, session?.book.bookId]);
 
-  const relinkHint =
-    session && session.book.availabilityStatus !== 'available'
-      ? session.book.availabilityReason ?? '当前需重新选择原文件。'
-      : null;
-
   const handleRelink = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file || !bookId) {
@@ -584,6 +768,30 @@ export function ReaderPage() {
       setChromeVisible(true);
     } catch (error) {
       setPageMessage(error instanceof Error ? error.message : '重关联失败');
+    }
+  };
+
+  const handleRemoteRetry = async () => {
+    if (!session || session.book.sourceType !== 'remote_url') {
+      return;
+    }
+
+    setIsRecovering(true);
+
+    try {
+      const result = await libraryService.refreshRemoteSource(session.book.sourceInstanceId);
+      const nextSession = await libraryService.getReaderSession(session.book.bookId);
+      setSession(nextSession);
+      setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+      setPageMessage(
+        result.validation.status === 'ready'
+          ? `已重新连接 ${result.source.name}`
+          : result.validation.reason ?? '书源仍不可用'
+      );
+    } catch (error) {
+      setPageMessage(error instanceof Error ? error.message : '重试连接失败');
+    } finally {
+      setIsRecovering(false);
     }
   };
 
@@ -606,6 +814,14 @@ export function ReaderPage() {
     );
   }
 
+  const isRemoteUnavailable =
+    session.book.availabilityStatus !== 'available' && session.book.sourceType === 'remote_url';
+  const relinkHint =
+    session.book.availabilityStatus !== 'available'
+      ? session.book.availabilityReason ??
+        (isRemoteUnavailable ? '当前需重新连接远程书源。' : '当前需重新选择原文件。')
+      : null;
+
   return (
     <>
       <input
@@ -626,9 +842,15 @@ export function ReaderPage() {
           <p>{relinkHint}</p>
           {pageMessage ? <p className="inline-message">{pageMessage}</p> : null}
           <div className="button-row">
-            <button className="action-button action-button--primary" onClick={() => relinkInputRef.current?.click()}>
-              重新选择原文件
-            </button>
+            {isRemoteUnavailable ? (
+              <button className="action-button action-button--primary" onClick={() => void handleRemoteRetry()} disabled={isRecovering}>
+                {isRecovering ? '正在重试...' : '重试连接书源'}
+              </button>
+            ) : (
+              <button className="action-button action-button--primary" onClick={() => relinkInputRef.current?.click()}>
+                重新选择原文件
+              </button>
+            )}
             <Link className="action-button" to="/">
               返回首页
             </Link>
