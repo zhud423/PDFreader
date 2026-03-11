@@ -7,6 +7,7 @@ export interface HelperTlsArtifacts {
   keyPath: string;
   certPath: string;
   caCertPath: string;
+  caCerPath: string;
   tlsDir: string;
 }
 
@@ -143,6 +144,21 @@ async function ensureCaCertificate(tlsDir: string): Promise<{ caCertPath: string
   return { caCertPath, caKeyPath };
 }
 
+async function ensureCaDerCertificate(caCertPath: string, tlsDir: string): Promise<string> {
+  const caCerPath = path.join(tlsDir, 'helper-ca.cer');
+  const derExists = await fileExists(caCerPath);
+  if (derExists) {
+    return caCerPath;
+  }
+
+  await runCommand('openssl', ['x509', '-in', caCertPath, '-outform', 'der', '-out', caCerPath]).catch(async (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`导出 DER 证书失败：${message}`);
+  });
+
+  return caCerPath;
+}
+
 async function issueServerCertificate(params: {
   tlsDir: string;
   caCertPath: string;
@@ -215,6 +231,7 @@ export async function ensureHelperTlsArtifacts(dataDir: string, lanIps: string[]
 
   const hostnames = buildHostnames();
   const { caCertPath, caKeyPath } = await ensureCaCertificate(tlsDir);
+  const caCerPath = await ensureCaDerCertificate(caCertPath, tlsDir);
   const { keyPath, certPath } = await issueServerCertificate({
     tlsDir,
     caCertPath,
@@ -227,6 +244,7 @@ export async function ensureHelperTlsArtifacts(dataDir: string, lanIps: string[]
     keyPath,
     certPath,
     caCertPath,
+    caCerPath,
     tlsDir
   };
 }

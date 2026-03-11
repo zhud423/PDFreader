@@ -168,8 +168,8 @@ async function serveCaCertificate(pathname: string, response: ServerResponse): P
     return;
   }
 
-  const caCertPath = service.getTlsCaCertPath();
-  if (!caCertPath) {
+  const certPath = pathname.endsWith('.cer') ? service.getTlsCaCerPath() : service.getTlsCaCertPath();
+  if (!certPath) {
     sendJson(response, 503, {
       error: 'tls_not_ready',
       message: '当前 HTTPS 证书还未准备好。'
@@ -177,15 +177,15 @@ async function serveCaCertificate(pathname: string, response: ServerResponse): P
     return;
   }
 
-  const info = await stat(caCertPath);
+  const info = await stat(certPath);
   const fileName = pathname.endsWith('.cer') ? 'PDFreader-Helper-CA.cer' : 'PDFreader-Helper-CA.pem';
   response.writeHead(200, {
-    'Content-Type': 'application/x-x509-ca-cert',
+    'Content-Type': pathname.endsWith('.cer') ? 'application/pkix-cert' : 'application/x-x509-ca-cert',
     'Content-Disposition': `attachment; filename="${fileName}"`,
     'Content-Length': String(info.size),
     'Cache-Control': 'no-store'
   });
-  createReadStream(caCertPath).pipe(response);
+  createReadStream(certPath).pipe(response);
 }
 
 async function handleApi(
@@ -337,7 +337,8 @@ async function start(): Promise<void> {
       service.setTlsStatus({
         enabled: true,
         port: tlsPort,
-        caCertPath: artifacts.caCertPath
+        caCertPath: artifacts.caCertPath,
+        caCerPath: artifacts.caCerPath
       });
       const secureServer = createHttpsServer(
         {

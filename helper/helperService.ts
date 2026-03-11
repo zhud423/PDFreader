@@ -15,6 +15,7 @@ interface HelperTlsStatus {
   enabled: boolean;
   port?: number;
   caCertPath?: string;
+  caCerPath?: string;
 }
 
 function nowIso(): string {
@@ -212,12 +213,17 @@ export class HelperService {
     this.tlsStatus = {
       enabled: Boolean(status.enabled),
       port: status.port,
-      caCertPath: status.caCertPath
+      caCertPath: status.caCertPath,
+      caCerPath: status.caCerPath
     };
   }
 
   getTlsCaCertPath(): string | undefined {
     return this.tlsStatus.caCertPath;
+  }
+
+  getTlsCaCerPath(): string | undefined {
+    return this.tlsStatus.caCerPath;
   }
 
   async updateSourceName(inputName: string): Promise<HelperState> {
