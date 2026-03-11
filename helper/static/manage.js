@@ -27,6 +27,10 @@ function getPrimarySetupUrl(snapshot) {
   return urls.primarySetupUrl || urls.addRemoteUrl || urls.connectUrl || urls.sourceBaseUrl || '';
 }
 
+function isHttpsSourceUrl(value) {
+  return typeof value === 'string' && value.trim().toLowerCase().startsWith('https://');
+}
+
 function setNotice(message, tone = 'normal') {
   if (!message) {
     notice.hidden = true;
@@ -216,7 +220,7 @@ async function renderConnectCard(snapshot) {
   copyPrimaryLinkButton.disabled = !getPrimarySetupUrl(snapshot);
   openConnectPageLink.href = connectUrl;
   openLibraryJsonLink.href = sourceBaseUrl ? `${sourceBaseUrl}/library.json` : '#';
-  if (urls.tlsEnabled && certificateInstallUrl) {
+  if (isHttpsSourceUrl(sourceBaseUrl) && certificateInstallUrl) {
     tlsSummaryText.hidden = false;
     installCertLink.href = certificateInstallUrl;
   } else {

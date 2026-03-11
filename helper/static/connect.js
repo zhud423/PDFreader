@@ -106,6 +106,10 @@ function renderPrimaryAction(payload) {
   primaryButton.hidden = false;
 }
 
+function isHttpsSourceUrl(value) {
+  return typeof value === 'string' && value.trim().toLowerCase().startsWith('https://');
+}
+
 function renderDeviceGuide(payload) {
   const env = detectClientEnvironment();
   deviceChip.textContent = env.deviceLabel;
@@ -216,7 +220,8 @@ async function loadConsumerState() {
     sourceUrlText.textContent = currentSourceUrl;
     statusPill.textContent = payload.sharingEnabled ? '共享中' : '共享未开启';
     statusPill.className = `status-pill ${payload.sharingEnabled ? '' : 'is-off'}`.trim();
-    if (payload.tlsEnabled && payload.certificateInstallUrl) {
+    const needsCertificate = isHttpsSourceUrl(currentSourceUrl);
+    if (needsCertificate && payload.certificateInstallUrl) {
       connectCertTip.hidden = false;
       connectCertActions.hidden = false;
       installCertLink.href = payload.certificateInstallUrl;
