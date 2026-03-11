@@ -59,7 +59,8 @@ async function main(): Promise<void> {
       '1. 把 PDFreader Helper.app 拖到 Applications 或任意目录。',
       '2. 首次打开若被 macOS 拦截，请先看同目录里的“首次打开失败怎么办.txt”。',
       '3. 打开后选择要共享的文件夹，并点击“开始共享”。',
-      '4. 如果浏览器没有自动打开管理页，可手动访问 http://127.0.0.1:48321/manage 。'
+      '4. 如果浏览器没有自动打开管理页，可手动访问 http://127.0.0.1:48321/manage 。',
+      '5. 手机首次连接若提示证书不受信任，请先在连接页安装 helper 证书。'
     ].join('\n'),
     'utf8'
   );
@@ -81,7 +82,12 @@ async function main(): Promise<void> {
       '',
       '如果应用已经能启动，但管理页没有自动出现：',
       '- 可手动访问 http://127.0.0.1:48321/manage',
-      '- 或查看 ~/Library/Application Support/PDFreaderHelper/helper.log'
+      '- 或查看 ~/Library/Application Support/PDFreaderHelper/helper.log',
+      '',
+      '如果手机端证书安装失败：',
+      '- 先完全退出旧版 helper，再启动新版 helper',
+      '- 再访问 http://<你的Mac局域网IP>:48321/certs/helper-ca.cer',
+      '- 若仍失败，清理 Safari 缓存后重试'
     ].join('\n'),
     'utf8'
   );

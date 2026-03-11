@@ -23,12 +23,22 @@ function getTlsPort(httpPort: number): number {
 
 function shouldEnableTls(): boolean {
   const sourceProtocol = process.env.PDFREADER_HELPER_SOURCE_PROTOCOL?.trim().toLowerCase();
+  if (sourceProtocol === 'http') {
+    return false;
+  }
   if (sourceProtocol === 'https') {
     return true;
   }
 
   const explicitTls = process.env.PDFREADER_HELPER_ENABLE_TLS?.trim().toLowerCase();
-  return explicitTls === '1' || explicitTls === 'true';
+  if (explicitTls === '0' || explicitTls === 'false') {
+    return false;
+  }
+  if (explicitTls === '1' || explicitTls === 'true') {
+    return true;
+  }
+
+  return true;
 }
 
 const helperRoot = path.dirname(fileURLToPath(import.meta.url));
