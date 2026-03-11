@@ -1,9 +1,12 @@
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { fileURLToPath } from 'node:url';
 import { HelperService } from './helperService.ts';
+import { listLanIpv4Addresses } from './network.ts';
+import { ensureHelperTlsArtifacts } from './tlsCertificate.ts';
 import { WatchCoordinator } from './watchCoordinator.ts';
 import { openUrlInBrowser } from './openBrowser.ts';
 
@@ -12,11 +15,23 @@ function getPort(): number {
   return Number.isInteger(input) && input > 0 ? input : 48321;
 }
 
+function getTlsPort(httpPort: number): number {
+  const fallback = httpPort + 1;
+  const input = Number(process.env.PDFREADER_HELPER_TLS_PORT ?? fallback);
+  return Number.isInteger(input) && input > 0 ? input : fallback;
+}
+
+function shouldEnableTls(): boolean {
+  return process.env.PDFREADER_HELPER_ENABLE_TLS !== '0';
+}
+
 const helperRoot = path.dirname(fileURLToPath(import.meta.url));
 const staticRoot = path.join(helperRoot, 'static');
 const port = getPort();
+const tlsPort = getTlsPort(port);
 const service = new HelperService({
-  port
+  port,
+  tlsPort
 });
 const watchCoordinator = new WatchCoordinator(async () => {
   await service.rescan();
@@ -32,17 +47,17 @@ const contentTypes = new Map<string, string>([
   ['.pdf', 'application/pdf']
 ]);
 
-function sendJson(response: Parameters<Parameters<typeof createServer>[0]>[1], statusCode: number, payload: unknown): void {
+function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   response.end(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
-function sendText(response: Parameters<Parameters<typeof createServer>[0]>[1], statusCode: number, body: string): void {
+function sendText(response: ServerResponse, statusCode: number, body: string): void {
   response.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
   response.end(body);
 }
 
-function sendSvg(response: Parameters<Parameters<typeof createServer>[0]>[1], statusCode: number, body: string): void {
+function sendSvg(response: ServerResponse, statusCode: number, body: string): void {
   response.writeHead(statusCode, {
     'Content-Type': 'image/svg+xml; charset=utf-8',
     'Cache-Control': 'no-store'
@@ -50,7 +65,7 @@ function sendSvg(response: Parameters<Parameters<typeof createServer>[0]>[1], st
   response.end(body);
 }
 
-async function readJsonBody(request: Parameters<Parameters<typeof createServer>[0]>[0]): Promise<Record<string, unknown>> {
+async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
 
   for await (const chunk of request) {
@@ -64,7 +79,7 @@ async function readJsonBody(request: Parameters<Parameters<typeof createServer>[
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
 }
 
-async function serveStatic(response: Parameters<Parameters<typeof createServer>[0]>[1], filePath: string): Promise<void> {
+async function serveStatic(response: ServerResponse, filePath: string): Promise<void> {
   const extension = path.extname(filePath).toLowerCase();
   const type = contentTypes.get(extension) ?? 'application/octet-stream';
   const info = await stat(filePath);
@@ -77,14 +92,14 @@ async function serveStatic(response: Parameters<Parameters<typeof createServer>[
   createReadStream(filePath).pipe(response);
 }
 
-function withCors(response: Parameters<Parameters<typeof createServer>[0]>[1]): void {
+function withCors(response: ServerResponse): void {
   response.setHeader('Access-Control-Allow-Origin', '*');
   response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS, POST, DELETE');
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   response.setHeader('Cache-Control', 'no-store');
 }
 
-async function serveSource(requestPath: string, response: Parameters<Parameters<typeof createServer>[0]>[1]): Promise<void> {
+async function serveSource(requestPath: string, response: ServerResponse): Promise<void> {
   const state = await service.getState();
   withCors(response);
 
@@ -126,11 +141,11 @@ async function serveSource(requestPath: string, response: Parameters<Parameters<
   sendJson(response, 404, { error: 'not_found', message: '来源资源不存在。' });
 }
 
-async function servePage(response: Parameters<Parameters<typeof createServer>[0]>[1], fileName: string): Promise<void> {
+async function servePage(response: ServerResponse, fileName: string): Promise<void> {
   await serveStatic(response, path.join(staticRoot, fileName));
 }
 
-async function serveQr(pathname: string, response: Parameters<Parameters<typeof createServer>[0]>[1]): Promise<void> {
+async function serveQr(pathname: string, response: ServerResponse): Promise<void> {
   const match = /^\/qr\/(primary|connect|source|add)\.svg$/.exec(pathname);
   if (!match) {
     sendText(response, 404, 'Not Found');
@@ -141,9 +156,35 @@ async function serveQr(pathname: string, response: Parameters<Parameters<typeof 
   sendSvg(response, 200, svg);
 }
 
+async function serveCaCertificate(pathname: string, response: ServerResponse): Promise<void> {
+  if (pathname !== '/certs/helper-ca.pem' && pathname !== '/certs/helper-ca.cer') {
+    sendText(response, 404, 'Not Found');
+    return;
+  }
+
+  const caCertPath = service.getTlsCaCertPath();
+  if (!caCertPath) {
+    sendJson(response, 503, {
+      error: 'tls_not_ready',
+      message: '当前 HTTPS 证书还未准备好。'
+    });
+    return;
+  }
+
+  const info = await stat(caCertPath);
+  const fileName = pathname.endsWith('.cer') ? 'PDFreader-Helper-CA.cer' : 'PDFreader-Helper-CA.pem';
+  response.writeHead(200, {
+    'Content-Type': 'application/x-x509-ca-cert',
+    'Content-Disposition': `attachment; filename="${fileName}"`,
+    'Content-Length': String(info.size),
+    'Cache-Control': 'no-store'
+  });
+  createReadStream(caCertPath).pipe(response);
+}
+
 async function handleApi(
-  request: Parameters<Parameters<typeof createServer>[0]>[0],
-  response: Parameters<Parameters<typeof createServer>[0]>[1],
+  request: IncomingMessage,
+  response: ServerResponse,
   pathname: string
 ): Promise<void> {
   withCors(response);
@@ -227,9 +268,8 @@ async function start(): Promise<void> {
       state.sharingEnabled
     );
   };
-  await refreshWatchers();
 
-  const server = createServer(async (request, response) => {
+  async function requestHandler(request: IncomingMessage, response: ServerResponse): Promise<void> {
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`);
       const pathname = url.pathname;
@@ -244,6 +284,11 @@ async function start(): Promise<void> {
 
       if (pathname === '/source/library.json' || pathname.startsWith('/source/books/') || pathname.startsWith('/source/covers/')) {
         await serveSource(pathname, response);
+        return;
+      }
+
+      if (pathname === '/certs/helper-ca.pem' || pathname === '/certs/helper-ca.cer') {
+        await serveCaCertificate(pathname, response);
         return;
       }
 
@@ -275,6 +320,51 @@ async function start(): Promise<void> {
         message
       });
     }
+  }
+
+  if (shouldEnableTls()) {
+    try {
+      if (tlsPort === port) {
+        throw new Error('HTTPS 端口不能和 HTTP 端口相同。');
+      }
+      const artifacts = await ensureHelperTlsArtifacts(service.store.dataDir, listLanIpv4Addresses());
+      service.setTlsStatus({
+        enabled: true,
+        port: tlsPort,
+        caCertPath: artifacts.caCertPath
+      });
+      const secureServer = createHttpsServer(
+        {
+          key: await readFile(artifacts.keyPath),
+          cert: await readFile(artifacts.certPath)
+        },
+        (request, response) => {
+          void requestHandler(request, response);
+        }
+      );
+      secureServer.on('error', (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        service.setTlsStatus({ enabled: false });
+        console.warn(`[helper] HTTPS 服务异常，已回退为 HTTP 书源：${message}`);
+      });
+      secureServer.listen(tlsPort, '0.0.0.0');
+    } catch (error) {
+      service.setTlsStatus({
+        enabled: false
+      });
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[helper] HTTPS 启动失败，已回退为 HTTP 书源：${message}`);
+    }
+  } else {
+    service.setTlsStatus({
+      enabled: false
+    });
+  }
+
+  await refreshWatchers();
+
+  const server = createHttpServer((request, response) => {
+    void requestHandler(request, response);
   });
 
   server.listen(port, '0.0.0.0', () => {

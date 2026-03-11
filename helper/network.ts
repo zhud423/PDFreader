@@ -25,7 +25,27 @@ function isLanIpv4(address: string): boolean {
   );
 }
 
-export function listLanUrls(port: number): LanUrlRecord[] {
+export function listLanIpv4Addresses(): string[] {
+  const interfaces = os.networkInterfaces();
+  const addresses: string[] = [];
+
+  for (const [label, entries] of Object.entries(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal || !isLanIpv4(entry.address)) {
+        continue;
+      }
+
+      if (!label) {
+        continue;
+      }
+      addresses.push(entry.address);
+    }
+  }
+
+  return Array.from(new Set(addresses)).sort((left, right) => left.localeCompare(right));
+}
+
+export function listLanUrls(port: number, protocol: 'http' | 'https' = 'http'): LanUrlRecord[] {
   const interfaces = os.networkInterfaces();
   const urls: LanUrlRecord[] = [];
 
@@ -38,8 +58,9 @@ export function listLanUrls(port: number): LanUrlRecord[] {
       urls.push({
         label,
         address: entry.address,
-        sourceBaseUrl: `http://${entry.address}:${port}/source`,
-        connectUrl: `http://${entry.address}:${port}/connect`
+        protocol,
+        sourceBaseUrl: `${protocol}://${entry.address}:${port}/source`,
+        connectUrl: `${protocol}://${entry.address}:${port}/connect`
       });
     }
   }

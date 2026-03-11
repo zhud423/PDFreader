@@ -27,6 +27,10 @@
             <p id="connect-summary" class="muted">完成前两步后，这里会出现二维码。</p>
             <button id="copy-primary-link" class="secondary button-compact">复制连接链接</button>
           </div>
+          <p id="tls-summary" class="muted" style="margin-top: 10px" hidden>
+            首次连接如果提示不受信任，请先在手机安装证书：
+            <a id="install-cert-link" href="#" target="_blank" rel="noreferrer">安装 helper 证书</a>
+          </p>
           <div id="qr-card" class="qr-card" style="margin-top: 14px" hidden>
             <img id="primary-qr" class="qr-card__image" alt="连接二维码" />
           </div>

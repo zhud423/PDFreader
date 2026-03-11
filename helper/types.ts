@@ -58,6 +58,7 @@ export interface ScanResult {
 export interface LanUrlRecord {
   label: string;
   address: string;
+  protocol?: 'http' | 'https';
   sourceBaseUrl: string;
   connectUrl: string;
 }
@@ -73,6 +74,13 @@ export interface HelperSnapshot {
     manageUrl: string;
     sourceBaseUrl: string;
     connectUrl: string;
+    sourceBaseUrlHttp?: string;
+    sourceBaseUrlHttps?: string;
+    connectUrlHttp?: string;
+    connectUrlHttps?: string;
+    certificateInstallUrl?: string;
+    tlsEnabled?: boolean;
+    tlsPort?: number;
     appBaseUrl?: string;
     addRemoteUrl?: string;
     primarySetupUrl: string;

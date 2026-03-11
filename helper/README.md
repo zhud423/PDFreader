@@ -19,6 +19,10 @@
   - 管理页 `/manage`
   - 连接页 `/connect`
   - 书源根路径 `/source`
+- 默认同时启动：
+  - HTTP 管理服务（默认 `48321`）
+  - HTTPS 书源服务（默认 `48322`）
+- 管理页提供“安装 helper 证书”入口，方便手机首次信任 HTTPS 书源
 - 默认使用 `https://pdfreader.gensstudio.com` 生成预填好的“添加局域网书源”链接
 - 可生成一个自包含 macOS `.app`
 
@@ -91,11 +95,14 @@ npm run helper
 helper 服务默认：
 
 - 监听端口 `48321`
+- HTTPS 书源端口 `48322`（可改）
 - 把状态文件写到 macOS 的 `~/Library/Application Support/PDFreaderHelper`
 
 可用环境变量覆盖：
 
 - `PDFREADER_HELPER_PORT`
+- `PDFREADER_HELPER_TLS_PORT`
+- `PDFREADER_HELPER_ENABLE_TLS`（默认开启，设为 `0` 可关闭）
 - `PDFREADER_HELPER_DATA_DIR`
 - `PDFREADER_HELPER_APP_URL`
 - `PDFREADER_HELPER_OPEN_BROWSER`
@@ -105,6 +112,14 @@ helper 服务默认：
 ```bash
 PDFREADER_HELPER_PORT=48330 PDFREADER_HELPER_DATA_DIR=/tmp/pdfreader-helper npm run helper
 ```
+
+## HTTPS 首次连接提示
+
+- helper 会在 `~/Library/Application Support/PDFreaderHelper/tls` 生成本地 CA 和服务器证书
+- 手机第一次连接时，若出现 `Load failed` 或证书不受信任：
+  - 先在 helper 管理页点击“安装 helper 证书”
+  - 安装后回到 PDFreader 再同步
+- CA 会复用，不会每次重启 helper 都变更
 
 ## 当前限制
 

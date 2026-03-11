@@ -12,6 +12,30 @@ import type {
 export const REMOTE_SOURCE_MANIFEST_FILE = 'library.json';
 const REMOTE_MANIFEST_TIMEOUT_MS = 12000;
 
+function isHttpsPage(): boolean {
+  if (typeof window !== 'undefined' && window.location?.protocol) {
+    return window.location.protocol === 'https:';
+  }
+
+  if (typeof location !== 'undefined' && location.protocol) {
+    return location.protocol === 'https:';
+  }
+
+  return false;
+}
+
+function isHttpBaseUrl(baseUrl: string | undefined): boolean {
+  if (!baseUrl) {
+    return false;
+  }
+
+  return baseUrl.trim().toLowerCase().startsWith('http://');
+}
+
+function buildHttpsHttpBlockedMessage(): string {
+  return '当前是 HTTPS 站点，浏览器会拦截 HTTP 局域网书源。请改用 HTTP 版 PDFreader，或把书源升级为 HTTPS。';
+}
+
 function normalizeRemoteBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim();
   if (!trimmed) {
@@ -41,6 +65,10 @@ function resolveAssetUrl(source: SourceInstanceRecord, path: string): string {
 }
 
 async function fetchManifest(source: SourceInstanceRecord) {
+  if (isHttpsPage() && isHttpBaseUrl(source.baseUrl)) {
+    throw new Error(buildHttpsHttpBlockedMessage());
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
@@ -55,6 +83,14 @@ async function fetchManifest(source: SourceInstanceRecord) {
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error(`连接书源超时（>${Math.round(REMOTE_MANIFEST_TIMEOUT_MS / 1000)} 秒）。`);
+    }
+    if (
+      isHttpsPage() &&
+      isHttpBaseUrl(source.baseUrl) &&
+      error instanceof TypeError &&
+      /load failed|failed to fetch|networkerror/i.test(error.message)
+    ) {
+      throw new Error(buildHttpsHttpBlockedMessage());
     }
     throw error;
   } finally {
@@ -79,6 +115,13 @@ function findBookEntry(manifestBooks: RemoteLibraryBookEntry[], book: BookRecord
 function mapValidationError(error: unknown): SourceValidationResult {
   const reason = error instanceof Error ? error.message : '无法连接到远程书源。';
 
+  if (reason.includes('浏览器会拦截 HTTP 局域网书源')) {
+    return {
+      status: 'invalid',
+      reason
+    };
+  }
+
   if (reason.startsWith('library.json')) {
     return {
       status: 'invalid',
@@ -95,7 +138,10 @@ function mapValidationError(error: unknown): SourceValidationResult {
 
   return {
     status: 'offline',
-    reason
+    reason:
+      /load failed|failed to fetch|networkerror/i.test(reason)
+        ? '无法连接书源（可能未安装 helper 证书、设备不在同一局域网，或 helper 未开启共享）。'
+        : reason
   };
 }
 

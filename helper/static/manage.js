@@ -12,6 +12,8 @@ const qrCard = document.querySelector('#qr-card');
 const primaryQrImage = document.querySelector('#primary-qr');
 const qrEmptyText = document.querySelector('#qr-empty');
 const copyPrimaryLinkButton = document.querySelector('#copy-primary-link');
+const tlsSummaryText = document.querySelector('#tls-summary');
+const installCertLink = document.querySelector('#install-cert-link');
 const sourceNameInput = document.querySelector('#source-name');
 const manualFolderPathInput = document.querySelector('#manual-folder-path');
 const openConnectPageLink = document.querySelector('#open-connect-page');
@@ -209,10 +211,18 @@ async function renderConnectCard(snapshot) {
   const { state, summary, urls } = snapshot;
   const sourceBaseUrl = urls.sourceBaseUrl || '';
   const connectUrl = urls.connectUrl || `${location.origin}/connect`;
+  const certificateInstallUrl = urls.certificateInstallUrl || '';
 
   copyPrimaryLinkButton.disabled = !getPrimarySetupUrl(snapshot);
   openConnectPageLink.href = connectUrl;
   openLibraryJsonLink.href = sourceBaseUrl ? `${sourceBaseUrl}/library.json` : '#';
+  if (urls.tlsEnabled && certificateInstallUrl) {
+    tlsSummaryText.hidden = false;
+    installCertLink.href = certificateInstallUrl;
+  } else {
+    tlsSummaryText.hidden = true;
+    installCertLink.removeAttribute('href');
+  }
 
   if (!state.sharingEnabled) {
     connectSummaryText.textContent = '开启共享后会显示二维码。';

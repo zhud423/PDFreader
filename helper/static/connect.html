@@ -38,6 +38,12 @@
       <article class="panel" style="margin-top: 16px">
         <h2>兜底地址</h2>
         <p class="muted" style="margin-top: 14px">如果上面的按钮没有把你带进 PDFreader，就复制下面这个书源地址。</p>
+        <p id="connect-cert-tip" class="muted" style="margin-top: 14px" hidden>
+          如果提示“Load failed”或证书不受信任，请先安装证书后再重试。
+        </p>
+        <div id="connect-cert-actions" class="button-row" style="margin-top: 12px" hidden>
+          <a id="install-cert-link" class="button-link secondary" href="#" target="_blank" rel="noreferrer">安装 helper 证书</a>
+        </div>
         <p id="connect-source-url" class="mono" style="margin-top: 14px"></p>
         <div class="button-row" style="margin-top: 16px">
           <button id="copy-source-url" class="secondary">复制书源地址</button>

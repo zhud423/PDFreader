@@ -11,6 +11,12 @@ import type { FolderRecord, HelperSnapshot, HelperState, LibraryEntryRecord } fr
 
 const DEFAULT_PDFREADER_APP_BASE_URL = 'https://pdfreader.gensstudio.com';
 
+interface HelperTlsStatus {
+  enabled: boolean;
+  port?: number;
+  caCertPath?: string;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -99,13 +105,19 @@ function deriveWorkAndChapter(entry: LibraryEntryRecord): {
 export class HelperService {
   readonly store: HelperStateStore;
   readonly port: number;
+  readonly tlsPort: number;
   readonly coverDir: string;
+  private tlsStatus: HelperTlsStatus;
   private currentScan: Promise<HelperState> | null = null;
 
-  constructor(options?: { dataDir?: string; port?: number }) {
+  constructor(options?: { dataDir?: string; port?: number; tlsPort?: number }) {
     this.store = new HelperStateStore(options?.dataDir);
     this.port = options?.port ?? 48321;
+    this.tlsPort = options?.tlsPort ?? this.port + 1;
     this.coverDir = path.join(this.store.dataDir, 'covers');
+    this.tlsStatus = {
+      enabled: false
+    };
   }
 
   async initialize(): Promise<void> {
@@ -118,11 +130,20 @@ export class HelperService {
 
   async getSnapshot(): Promise<HelperSnapshot> {
     const state = await this.getState();
-    const lan = listLanUrls(this.port);
-    const localhost = `http://127.0.0.1:${this.port}`;
-    const sourceBaseUrl = lan[0]?.sourceBaseUrl ?? `${localhost}/source`;
-    const connectUrl = lan[0]?.connectUrl ?? `${localhost}/connect`;
-    const effectiveAppBaseUrl = inferDefaultAppBaseUrl(lan) ?? state.appBaseUrl;
+    const lanHttp = listLanUrls(this.port, 'http');
+    const localhostHttp = `http://127.0.0.1:${this.port}`;
+    const sourceBaseUrlHttp = lanHttp[0]?.sourceBaseUrl ?? `${localhostHttp}/source`;
+    const connectUrlHttp = lanHttp[0]?.connectUrl ?? `${localhostHttp}/connect`;
+
+    const tlsEnabled = Boolean(this.tlsStatus.enabled && this.tlsStatus.port && this.tlsStatus.caCertPath);
+    const lanHttps = tlsEnabled ? listLanUrls(this.tlsStatus.port ?? this.tlsPort, 'https') : [];
+    const localhostHttps = `https://127.0.0.1:${this.tlsStatus.port ?? this.tlsPort}`;
+    const sourceBaseUrlHttps = tlsEnabled ? lanHttps[0]?.sourceBaseUrl ?? `${localhostHttps}/source` : undefined;
+    const connectUrlHttps = tlsEnabled ? lanHttps[0]?.connectUrl ?? `${localhostHttps}/connect` : undefined;
+
+    const sourceBaseUrl = sourceBaseUrlHttps ?? sourceBaseUrlHttp;
+    const connectUrl = connectUrlHttp;
+    const effectiveAppBaseUrl = inferDefaultAppBaseUrl(lanHttps.length > 0 ? lanHttps : lanHttp) ?? state.appBaseUrl;
     let addRemoteUrl: string | undefined;
     if (effectiveAppBaseUrl) {
       try {
@@ -133,6 +154,11 @@ export class HelperService {
     }
     const primarySetupUrl = addRemoteUrl ?? connectUrl;
     const primarySetupLabel = addRemoteUrl ? '直接打开 PDFreader 添加页' : '先打开连接页';
+    const certificateInstallUrl = tlsEnabled
+      ? lanHttp[0]
+        ? `http://${lanHttp[0].address}:${this.port}/certs/helper-ca.cer`
+        : `${localhostHttp}/certs/helper-ca.cer`
+      : undefined;
 
     return {
       state,
@@ -142,16 +168,35 @@ export class HelperService {
         issueCount: state.scanIssues.length
       },
       urls: {
-        manageUrl: `${localhost}/manage`,
+        manageUrl: `${localhostHttp}/manage`,
         sourceBaseUrl,
         connectUrl,
+        sourceBaseUrlHttp,
+        sourceBaseUrlHttps,
+        connectUrlHttp,
+        connectUrlHttps,
+        certificateInstallUrl,
+        tlsEnabled,
+        tlsPort: this.tlsStatus.port,
         appBaseUrl: effectiveAppBaseUrl,
         addRemoteUrl,
         primarySetupUrl,
         primarySetupLabel,
-        lan
+        lan: lanHttps.length > 0 ? lanHttps : lanHttp
       }
     };
+  }
+
+  setTlsStatus(status: HelperTlsStatus): void {
+    this.tlsStatus = {
+      enabled: Boolean(status.enabled),
+      port: status.port,
+      caCertPath: status.caCertPath
+    };
+  }
+
+  getTlsCaCertPath(): string | undefined {
+    return this.tlsStatus.caCertPath;
   }
 
   async updateSourceName(inputName: string): Promise<HelperState> {
@@ -342,7 +387,14 @@ export class HelperService {
     appBaseUrl?: string;
     sharingEnabled: boolean;
     sourceBaseUrl: string;
+    sourceBaseUrlHttp?: string;
+    sourceBaseUrlHttps?: string;
     connectUrl: string;
+    connectUrlHttp?: string;
+    connectUrlHttps?: string;
+    certificateInstallUrl?: string;
+    tlsEnabled?: boolean;
+    tlsPort?: number;
     addRemoteUrl?: string;
     primarySetupUrl: string;
     primarySetupLabel: string;
@@ -359,7 +411,14 @@ export class HelperService {
       appBaseUrl: snapshot.urls.appBaseUrl,
       sharingEnabled: snapshot.state.sharingEnabled,
       sourceBaseUrl: snapshot.urls.sourceBaseUrl,
+      sourceBaseUrlHttp: snapshot.urls.sourceBaseUrlHttp,
+      sourceBaseUrlHttps: snapshot.urls.sourceBaseUrlHttps,
       connectUrl: snapshot.urls.connectUrl,
+      connectUrlHttp: snapshot.urls.connectUrlHttp,
+      connectUrlHttps: snapshot.urls.connectUrlHttps,
+      certificateInstallUrl: snapshot.urls.certificateInstallUrl,
+      tlsEnabled: snapshot.urls.tlsEnabled,
+      tlsPort: snapshot.urls.tlsPort,
       addRemoteUrl: snapshot.urls.addRemoteUrl,
       primarySetupUrl: snapshot.urls.primarySetupUrl,
       primarySetupLabel: snapshot.urls.primarySetupLabel,
@@ -390,12 +449,16 @@ export class HelperService {
   }
 
   getServerBanner(): string {
-    const lan = listLanUrls(this.port);
+    const lan = this.tlsStatus.enabled ? listLanUrls(this.tlsStatus.port ?? this.tlsPort, 'https') : listLanUrls(this.port);
     const headline = `PDFreader Helper 已启动`;
-    const sourceUrl = lan[0]?.sourceBaseUrl ?? `http://127.0.0.1:${this.port}/source`;
+    const sourceUrl = lan[0]?.sourceBaseUrl ?? (this.tlsStatus.enabled ? `https://127.0.0.1:${this.tlsStatus.port ?? this.tlsPort}/source` : `http://127.0.0.1:${this.port}/source`);
     const manageUrl = `http://127.0.0.1:${this.port}/manage`;
-
-    return [headline, `管理页：${manageUrl}`, `书源地址：${sourceUrl}`, `主机：${os.hostname()}`].join('\n');
+    const lines = [headline, `管理页：${manageUrl}`, `书源地址：${sourceUrl}`, `主机：${os.hostname()}`];
+    if (this.tlsStatus.enabled && this.tlsStatus.port) {
+      lines.push(`HTTPS 端口：${this.tlsStatus.port}`);
+      lines.push(`证书下载：http://127.0.0.1:${this.port}/certs/helper-ca.cer`);
+    }
+    return lines.join('\n');
   }
 
   private buildAppAddUrl(appBaseUrl: string, sourceBaseUrl: string, sourceName: string): string {

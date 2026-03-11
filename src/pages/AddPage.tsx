@@ -26,6 +26,25 @@ type ImportFlowMode = 'new' | 'existing';
 type AddPageTab = 'local' | 'remote';
 const REMOTE_SYNC_TIMEOUT_MS = 20000;
 
+function getHttpsHttpMismatchMessage(baseUrl: string): string | null {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const isHttpsPage = typeof window !== 'undefined' && window.location?.protocol === 'https:';
+    if (isHttpsPage && parsed.protocol === 'http:') {
+      return '当前是 HTTPS 页面，浏览器会拦截 HTTP 局域网书源。请改用 HTTP 版 PDFreader，或把书源升级为 HTTPS。';
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -219,6 +238,17 @@ export function AddPage() {
       setSyncingSourceId('new');
       setFeedback(null);
 
+      const mismatchMessage = getHttpsHttpMismatchMessage(presetBaseUrl);
+      if (mismatchMessage) {
+        setFeedback({
+          summary: '书源地址协议不兼容',
+          details: [mismatchMessage],
+          tone: 'warning'
+        });
+        setSyncingSourceId(null);
+        return;
+      }
+
       try {
         const result = await withTimeout(
           libraryService.syncRemoteUrlSource({
@@ -327,6 +357,16 @@ export function AddPage() {
       return;
     }
 
+    const mismatchMessage = getHttpsHttpMismatchMessage(sourceDraft.baseUrl);
+    if (mismatchMessage) {
+      setFeedback({
+        summary: '书源地址协议不兼容',
+        details: [mismatchMessage],
+        tone: 'warning'
+      });
+      return;
+    }
+
     setSyncingSourceId('new');
     setFeedback(null);
 
@@ -353,6 +393,16 @@ export function AddPage() {
   };
 
   const handleRefreshSource = async (source: SourceSummary) => {
+    const mismatchMessage = getHttpsHttpMismatchMessage(source.baseUrl ?? '');
+    if (mismatchMessage) {
+      setFeedback({
+        summary: '书源地址协议不兼容',
+        details: [mismatchMessage],
+        tone: 'warning'
+      });
+      return;
+    }
+
     setSyncingSourceId(source.sourceInstanceId);
     setFeedback(null);
 

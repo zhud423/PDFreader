@@ -10,6 +10,9 @@ const mobileSummaryText = document.querySelector('#mobile-summary');
 const mobileStepsList = document.querySelector('#mobile-steps');
 const sourceUrlText = document.querySelector('#connect-source-url');
 const copyButton = document.querySelector('#copy-source-url');
+const connectCertTip = document.querySelector('#connect-cert-tip');
+const connectCertActions = document.querySelector('#connect-cert-actions');
+const installCertLink = document.querySelector('#install-cert-link');
 
 let currentSourceUrl = `${location.origin}/source`;
 let currentPrimaryAction = { type: 'none', value: '' };
@@ -130,41 +133,65 @@ function renderDeviceGuide(payload) {
 
   if (!env.isMobile) {
     mobileSummaryText.textContent = '这页更适合发给手机继续。桌面上看到这里，通常说明你只是测试链路。';
-    renderSteps(['让手机和这台 Mac 连到同一局域网。', '把二维码或书源地址发到手机。', '在手机上的 PDFreader 完成添加。']);
+    renderSteps([
+      payload.tlsEnabled ? '先在手机安装 helper 证书（只需首次）。' : '让手机和这台 Mac 连到同一局域网。',
+      '把二维码或书源地址发到手机。',
+      '在手机上的 PDFreader 完成添加。'
+    ]);
     return;
   }
 
   if (env.isIOS && payload.addRemoteUrl) {
-    mobileSummaryText.textContent = 'iPhone / iPad 上先试按钮；如果还停在 Safari，就改走复制地址。';
-    renderSteps([
+    mobileSummaryText.textContent = 'iPhone / iPad 上先试按钮；如果没进入 PDFreader，就改走复制地址。';
+    const steps = [
       '先点“打开 PDFreader 添加页”。',
       '如果直接进了 PDFreader，就保存并同步。',
       '如果还停在 Safari，就复制书源地址。',
       '回到主屏幕里的 PDFreader，再手动添加。'
-    ]);
+    ];
+    if (payload.tlsEnabled) {
+      steps.unshift('首次连接先安装 helper 证书。');
+    }
+    renderSteps(steps);
     return;
   }
 
   if (env.isIOS) {
     mobileSummaryText.textContent = '这台 iPhone / iPad 更稳的方式，是复制地址后再回到主屏幕里的 PDFreader。';
-    renderSteps(['先复制书源地址。', '回到主屏幕打开 PDFreader。', '进入“添加内容 -> 局域网书源”。', '粘贴地址并保存。']);
+    const steps = ['先复制书源地址。', '回到主屏幕打开 PDFreader。', '进入“添加内容 -> 局域网书源”。', '粘贴地址并保存。'];
+    if (payload.tlsEnabled) {
+      steps.unshift('首次连接先安装 helper 证书。');
+    }
+    renderSteps(steps);
     return;
   }
 
   if (env.isAndroid && payload.addRemoteUrl) {
     mobileSummaryText.textContent = 'Android 上通常可以直接打开添加页。';
-    renderSteps(['先点“打开 PDFreader 添加页”。', '确认内容无误。', '点击“保存并同步”。', '如果没打开成功，再复制书源地址。']);
+    const steps = ['先点“打开 PDFreader 添加页”。', '确认内容无误。', '点击“保存并同步”。', '如果没打开成功，再复制书源地址。'];
+    if (payload.tlsEnabled) {
+      steps.unshift('首次连接先安装 helper 证书。');
+    }
+    renderSteps(steps);
     return;
   }
 
   if (env.isAndroid) {
     mobileSummaryText.textContent = 'Android 上当前更稳的方式，也是先复制书源地址，再回到 PDFreader 手动添加。';
-    renderSteps(['先复制书源地址。', '打开 PDFreader。', '进入“添加内容 -> 局域网书源”。', '粘贴地址并保存。']);
+    const steps = ['先复制书源地址。', '打开 PDFreader。', '进入“添加内容 -> 局域网书源”。', '粘贴地址并保存。'];
+    if (payload.tlsEnabled) {
+      steps.unshift('首次连接先安装 helper 证书。');
+    }
+    renderSteps(steps);
     return;
   }
 
   mobileSummaryText.textContent = '如果按钮没有把你带进 PDFreader，就直接复制书源地址。';
-  renderSteps(['先试上面的推荐动作。', '如果没有进入 PDFreader，就复制书源地址。', '打开 PDFreader 的添加页。', '粘贴地址并保存。']);
+  const fallbackSteps = ['先试上面的推荐动作。', '如果没有进入 PDFreader，就复制书源地址。', '打开 PDFreader 的添加页。', '粘贴地址并保存。'];
+  if (payload.tlsEnabled) {
+    fallbackSteps.unshift('首次连接先安装 helper 证书。');
+  }
+  renderSteps(fallbackSteps);
 }
 
 async function copyText(value) {
@@ -189,6 +216,15 @@ async function loadConsumerState() {
     sourceUrlText.textContent = currentSourceUrl;
     statusPill.textContent = payload.sharingEnabled ? '共享中' : '共享未开启';
     statusPill.className = `status-pill ${payload.sharingEnabled ? '' : 'is-off'}`.trim();
+    if (payload.tlsEnabled && payload.certificateInstallUrl) {
+      connectCertTip.hidden = false;
+      connectCertActions.hidden = false;
+      installCertLink.href = payload.certificateInstallUrl;
+    } else {
+      connectCertTip.hidden = true;
+      connectCertActions.hidden = true;
+      installCertLink.removeAttribute('href');
+    }
 
     renderPrimaryAction(payload);
     renderDeviceGuide(payload);
