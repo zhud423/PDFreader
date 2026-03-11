@@ -10,6 +10,9 @@ export interface RemoteLibraryBookEntry {
   firstPageHeight: number;
   pdfPath: string;
   coverPath?: string;
+  workKey?: string;
+  workTitle?: string;
+  chapterPath?: string;
   updatedAt?: string;
 }
 
@@ -50,6 +53,9 @@ function parseBookEntry(value: unknown, index: number): RemoteLibraryBookEntry {
 
   const updatedAt = value.updatedAt;
   const coverPath = value.coverPath;
+  const workKey = value.workKey;
+  const workTitle = value.workTitle;
+  const chapterPath = value.chapterPath;
 
   return {
     id: readRequiredString(value, 'id', prefix),
@@ -63,6 +69,9 @@ function parseBookEntry(value: unknown, index: number): RemoteLibraryBookEntry {
     firstPageHeight: readRequiredNumber(value, 'firstPageHeight', prefix),
     pdfPath: readRequiredString(value, 'pdfPath', prefix),
     coverPath: typeof coverPath === 'string' && coverPath.trim() !== '' ? coverPath.trim() : undefined,
+    workKey: typeof workKey === 'string' && workKey.trim() !== '' ? workKey.trim() : undefined,
+    workTitle: typeof workTitle === 'string' && workTitle.trim() !== '' ? workTitle.trim() : undefined,
+    chapterPath: typeof chapterPath === 'string' && chapterPath.trim() !== '' ? chapterPath.trim() : undefined,
     updatedAt: typeof updatedAt === 'string' && updatedAt.trim() !== '' ? updatedAt.trim() : undefined
   };
 }

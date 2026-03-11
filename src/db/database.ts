@@ -3,6 +3,7 @@ import type { AppStateRecord, ProgressRecord } from '../domain/progress';
 import type { BookRecord, CoverCacheRecord } from '../domain/book';
 import type { SourceInstanceRecord } from '../domain/source';
 import type { TitleRecord } from '../domain/title';
+import { createUuid } from '../shared/utils/uuid';
 
 class PDFReaderDatabase extends Dexie {
   books!: Table<BookRecord, string>;
@@ -59,7 +60,7 @@ class PDFReaderDatabase extends Dexie {
             continue;
           }
 
-          const titleId = crypto.randomUUID();
+          const titleId = createUuid();
 
           await titlesTable.put({
             titleId,

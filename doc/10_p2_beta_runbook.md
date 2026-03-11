@@ -31,8 +31,10 @@
 最低要求：
 
 - PDFreader 应用壳通过 `HTTPS` 访问
-- 远程书源也优先通过 `HTTPS` 暴露
+- 远程书源应支持 `CORS`
+- 真机 / PWA 测试时，远程书源也优先通过 `HTTPS` 暴露
 - 远程目录根路径下可访问 `library.json`
+- `books[].contentHash` 建议直接填写 PDF 的 `SHA-256`
 - PDF 和封面资源允许浏览器跨域读取
 
 建议至少返回：
@@ -43,6 +45,61 @@
 当前示例文件：
 
 - `doc/examples/remote-library.example.json`
+
+### 3.1 通用 Mac 测试法
+
+只要一台 Mac 能把静态目录通过局域网暴露出来，就能测试当前 remote source 协议，不依赖项目脚本。
+
+定位说明：
+
+- 本节仅用于开发验证与高级用户联调
+- 不作为后续普通用户正式接入方案
+
+建议目录结构：
+
+- `library.json`
+- `books/{file}.pdf`
+- `covers/{file}.jpg`（可选）
+
+桌面调试可先用 `Python 3` 起一个带 `CORS` 的静态服务：
+
+```bash
+cd /path/to/remote-library
+python3 - <<'PY'
+from functools import partial
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+
+class Handler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', '*')
+        self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+
+ThreadingHTTPServer(('0.0.0.0', 8000), partial(Handler, directory='.')).serve_forever()
+PY
+```
+
+获取当前 Mac 的局域网 IP：
+
+```bash
+ipconfig getifaddr en0
+```
+
+然后在 PDFreader 里添加：
+
+- `http://<Mac-IP>:8000`
+
+补充说明：
+
+- 如果机器走的是 Wi-Fi 以外网卡，可把 `en0` 换成对应网卡
+- 若 macOS 防火墙弹窗，需允许 `Python` 接收入站连接
+- iPhone / iPad Safari 或主屏 PWA 联调时，建议把同一目录切到 `HTTPS` 静态服务；目录结构和 `library.json` 协议不需要改
 
 ## 4. 测试重点
 

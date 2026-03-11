@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDFreader Helper</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page page--narrow">
+      <section class="hero">
+        <div id="status-pill" class="status-pill is-off">正在读取状态...</div>
+        <h1>PDFreader Helper</h1>
+        <p class="muted">只做三件事：选文件夹，开始共享，让手机连接。</p>
+      </section>
+
+      <div id="notice" class="notice" hidden></div>
+
+      <article class="panel">
+        <h2 id="step-title">正在准备当前步骤...</h2>
+        <div class="button-row" style="margin-top: 16px">
+          <button id="primary-action" class="button-primary">继续</button>
+        </div>
+
+        <section class="step-connect" style="margin-top: 18px">
+          <div class="qr-toolbar">
+            <p id="connect-summary" class="muted">完成前两步后，这里会出现二维码。</p>
+            <button id="copy-primary-link" class="secondary button-compact">复制连接链接</button>
+          </div>
+          <div id="qr-card" class="qr-card" style="margin-top: 14px" hidden>
+            <img id="primary-qr" class="qr-card__image" alt="连接二维码" />
+          </div>
+          <p id="qr-empty" class="empty" style="margin-top: 14px">当前还不能给手机扫码，请先完成上一步。</p>
+        </section>
+      </article>
+
+      <article class="panel" style="margin-top: 16px">
+        <h2>你正在共享什么</h2>
+        <p class="muted" style="margin-top: 14px">只共享下面这些文件夹，且只读，不会修改原文件。</p>
+        <ul id="folder-list" class="folder-list" style="margin-top: 14px"></ul>
+        <div class="stats-row" style="margin-top: 16px">
+          <div class="stats-card">
+            <p class="muted">已发现 PDF</p>
+            <strong id="book-count">0</strong>
+          </div>
+          <div class="stats-card">
+            <p class="muted">最近更新</p>
+            <strong id="last-scan">还没有扫描记录</strong>
+          </div>
+        </div>
+        <p id="scan-note" class="muted" style="margin-top: 14px"></p>
+      </article>
+
+      <details class="panel details-panel" style="margin-top: 16px">
+        <summary>高级设置</summary>
+        <div class="details-panel__body">
+          <div class="field">
+            <label for="source-name">书源名称</label>
+            <input id="source-name" placeholder="例如：家里的漫画书库" />
+          </div>
+          <div class="button-row" style="margin-top: 12px">
+            <button id="save-source-name" class="secondary">保存名称</button>
+          </div>
+
+          <div class="field" style="margin-top: 16px">
+            <label for="manual-folder-path">手动输入文件夹路径</label>
+            <input id="manual-folder-path" placeholder="/Users/you/Documents/Comics" />
+          </div>
+          <div class="button-row" style="margin-top: 12px">
+            <button id="choose-folder-advanced" class="secondary">选择另一个文件夹</button>
+            <button id="add-folder-manually" class="secondary">添加这个文件夹</button>
+          </div>
+
+          <div style="margin-top: 16px">
+            <p class="muted">管理已选文件夹</p>
+            <ul id="folder-manage-list" class="folder-list" style="margin-top: 12px"></ul>
+          </div>
+
+          <div class="button-row" style="margin-top: 16px">
+            <button id="rescan" class="secondary">重新扫描</button>
+            <button id="stop-share" class="secondary">停止共享</button>
+          </div>
+
+          <div class="button-row" style="margin-top: 16px">
+            <a id="open-connect-page" class="button-link secondary" href="/connect" target="_blank" rel="noreferrer">打开连接页</a>
+            <a id="open-library-json" class="button-link secondary" href="/source/library.json" target="_blank" rel="noreferrer">查看 library.json</a>
+          </div>
+        </div>
+      </details>
+    </main>
+    <script type="module" src="/manage.js"></script>
+  </body>
+</html>

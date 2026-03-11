@@ -10,6 +10,7 @@ import type {
 } from './sourceAdapter';
 
 export const REMOTE_SOURCE_MANIFEST_FILE = 'library.json';
+const REMOTE_MANIFEST_TIMEOUT_MS = 12000;
 
 function normalizeRemoteBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim();
@@ -40,9 +41,25 @@ function resolveAssetUrl(source: SourceInstanceRecord, path: string): string {
 }
 
 async function fetchManifest(source: SourceInstanceRecord) {
-  const response = await fetch(buildManifestUrl(source), {
-    cache: 'no-store'
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, REMOTE_MANIFEST_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(buildManifestUrl(source), {
+      cache: 'no-store',
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`连接书源超时（>${Math.round(REMOTE_MANIFEST_TIMEOUT_MS / 1000)} 秒）。`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     throw new Error(`书源目录不可用（HTTP ${response.status}）。`);
@@ -106,6 +123,9 @@ class RemoteUrlSourceAdapter implements SourceAdapter {
       contentHash: entry.contentHash,
       title: entry.title,
       displayTitle: entry.title,
+      workKey: entry.workKey,
+      workTitle: entry.workTitle,
+      chapterPath: entry.chapterPath,
       fileName: entry.fileName,
       fileSize: entry.fileSize,
       mimeType: entry.mimeType,

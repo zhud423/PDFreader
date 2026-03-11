@@ -13,6 +13,7 @@ import type {
 } from '../sources/sourceAdapter';
 import { getSourceAdapter } from '../sources/sourceRegistry';
 import { sourceService, type RemoteSourceDraft } from './sourceService';
+import { createUuid } from '../shared/utils/uuid';
 
 export interface ImportResult {
   imported: BookRecord[];
@@ -354,7 +355,7 @@ async function ensureTitleRecord(params: {
 
   const displayTitle = normalizeDisplayTitle(params.displayTitle);
   const title = normalizeTitleRecord(undefined, {
-    titleId: params.titleId ?? crypto.randomUUID(),
+    titleId: params.titleId ?? createUuid(),
     title: displayTitle,
     displayTitle,
     coverBookId: params.coverBookId ?? null,
@@ -509,17 +510,19 @@ function createRemoteBookRecord(
   existing: BookRecord | undefined,
   titleId: string,
   source: SourceInstanceRecord,
-  entry: SourceCatalogBook
+  entry: SourceCatalogBook,
+  collectionKey: string
 ): BookRecord {
   const displayTitle = entry.displayTitle.trim() || entry.title.trim() || entry.fileName;
 
   return normalizeBookRecord(existing, {
-    bookId: existing?.bookId ?? crypto.randomUUID(),
+    bookId: existing?.bookId ?? createUuid(),
     titleId,
     contentHash: entry.contentHash,
     sourceType: 'remote_url',
     sourceInstanceId: source.sourceInstanceId,
     sourceKey: entry.sourceKey,
+    collectionKey,
     title: entry.title,
     displayTitle,
     coverRef: entry.coverUrl ?? existing?.coverRef ?? null,
@@ -542,6 +545,14 @@ async function syncRemoteCatalogBooks(
   catalog: SourceCatalogBook[]
 ): Promise<Pick<RemoteSourceSyncResult, 'importedCount' | 'updatedCount' | 'missingCount' | 'totalBooks'>> {
   const previousBooks = await db.books.where('sourceInstanceId').equals(source.sourceInstanceId).toArray();
+  const collectionTitleMap = new Map<string, string>();
+  for (const previousBook of previousBooks) {
+    if (!previousBook.collectionKey || collectionTitleMap.has(previousBook.collectionKey)) {
+      continue;
+    }
+
+    collectionTitleMap.set(previousBook.collectionKey, previousBook.titleId);
+  }
   const seenKeys = new Set<string>();
   let importedCount = 0;
   let updatedCount = 0;
@@ -550,23 +561,40 @@ async function syncRemoteCatalogBooks(
   await db.transaction('rw', db.books, db.progress, db.titles, async () => {
     for (const entry of catalog) {
       const existing = await findExistingBookForCatalog(source, entry);
+      const collectionKey = `${source.sourceInstanceId}:${entry.workKey?.trim() || `book:${entry.sourceKey}`}`;
+      const mappedTitleId = collectionTitleMap.get(collectionKey);
+      const normalizedChapterName = entry.displayTitle.trim() || entry.title.trim() || entry.fileName;
+      const normalizedWorkTitle = entry.workTitle?.trim() || normalizedChapterName;
       let title =
-        existing?.titleId
+        mappedTitleId || existing?.titleId
           ? await ensureTitleRecord({
-              titleId: existing.titleId,
-              displayTitle: existing.displayTitle,
-              coverBookId: existing.coverRef ?? existing.bookId
+              titleId: mappedTitleId ?? existing?.titleId,
+              displayTitle: normalizedWorkTitle || existing?.displayTitle || normalizedChapterName,
+              coverBookId: (mappedTitleId ? undefined : existing?.coverRef) ?? existing?.bookId
             })
           : await ensureTitleRecord({
-              displayTitle: entry.displayTitle.trim() || entry.title.trim() || entry.fileName
+              displayTitle: normalizedWorkTitle
             });
-      const nextBook = createRemoteBookRecord(existing, title.titleId, source, entry);
+
+      const looksLikeLegacyAutoTitle =
+        !mappedTitleId &&
+        !!existing &&
+        !existing.collectionKey &&
+        existing.displayTitle === normalizedChapterName;
+      if (looksLikeLegacyAutoTitle && title.displayTitle !== normalizedWorkTitle) {
+        title = await touchTitleRecord(title, {
+          displayTitle: normalizedWorkTitle,
+          title: normalizedWorkTitle
+        });
+      }
+      const nextBook = createRemoteBookRecord(existing, title.titleId, source, entry, collectionKey);
 
       await db.books.put(nextBook);
       await ensureBookProgress(nextBook.bookId);
       if (!title.coverBookId) {
         title = await touchTitleRecord(title, { coverBookId: nextBook.bookId });
       }
+      collectionTitleMap.set(collectionKey, title.titleId);
 
       if (existing) {
         updatedCount += 1;
@@ -772,7 +800,7 @@ export const libraryService = {
           });
         }
 
-        const bookId = crypto.randomUUID();
+        const bookId = createUuid();
         let title =
           sharedTitle ??
           (await ensureTitleRecord({

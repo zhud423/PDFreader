@@ -24,7 +24,7 @@ function buildRemoteSourceFeedback(result: RemoteSourceSyncResult): HomeFeedback
   if (result.validation.status !== 'ready') {
     return {
       summary: `${result.source.name} 已保存，但当前不可用`,
-      details: [result.validation.reason ?? '请确认局域网地址、HTTPS 配置和 library.json 是否可访问。'],
+      details: [result.validation.reason ?? '请确认局域网地址、CORS 和 library.json 是否可访问；真机 / PWA 建议使用 HTTPS。'],
       tone: 'warning'
     };
   }

@@ -6,11 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "helper": "node --experimental-strip-types helper/server.ts",
+    "helper:app": "node --experimental-strip-types helper/buildMacLauncher.ts",
+    "helper:dmg": "node --experimental-strip-types helper/buildMacDmg.ts"
   },
   "dependencies": {
     "dexie": "^4.0.10",
     "pdfjs-dist": "^4.10.38",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.30.0"
@@ -24,4 +28,3 @@
     "vite-plugin-pwa": "^0.21.1"
   }
 }
-

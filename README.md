@@ -29,14 +29,17 @@ npm run dev
 最低要求：
 
 - 书源根目录可访问 `library.json`
+- `books[].contentHash` 需提供稳定内容标识，建议直接填写 PDF 的 `SHA-256`
 - `books[].pdfPath` 指向可直接读取的 PDF
 - 推荐同时提供 `coverPath`
-- 远程资源应支持 `HTTPS + CORS`
+- 远程资源应支持 `CORS`
+- 桌面调试可先用 `HTTP`，真机 / PWA 测试建议切到 `HTTPS`
 
 示例见：
 
 - `doc/examples/remote-library.example.json`
 - `doc/10_p2_beta_runbook.md`
+- `helper/README.md`（面向普通用户的 Mac helper 打包与使用）
 
 ## 当前限制
 

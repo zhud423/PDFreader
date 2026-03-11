@@ -572,6 +572,34 @@ a {
   box-shadow: 0 18px 54px rgba(165, 88, 46, 0.12);
 }
 
+.add-tabs-shell {
+  margin-top: 0;
+  padding: 10px;
+}
+
+.add-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.add-tab {
+  appearance: none;
+  border: 1px solid rgba(62, 41, 17, 0.12);
+  border-radius: 999px;
+  padding: 0.62rem 0.9rem;
+  background: rgba(46, 33, 20, 0.05);
+  color: #1d170f;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.add-tab.is-active {
+  border-color: rgba(165, 88, 46, 0.42);
+  background: rgba(165, 88, 46, 0.14);
+}
+
 .add-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

@@ -31,6 +31,7 @@ interface RenderReport {
 
 const TAP_ZONE_RATIO = 1 / 3;
 const READER_SETTINGS_STORAGE_KEY = 'pdfreader:reader-settings';
+const READER_SESSION_TIMEOUT_MS = 20000;
 
 interface ReaderSettings {
   tapStepEnabled: boolean;
@@ -69,6 +70,22 @@ function loadReaderSettings(): ReaderSettings {
       tapStepRatio: 0.9,
       showPageSeparators: true
     };
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -1004,11 +1021,27 @@ export function ReaderPage() {
   const [editingChapter, setEditingChapter] = useState<BookWithProgress | null>(null);
   const [chapterDraft, setChapterDraft] = useState('');
   const [removingChapter, setRemovingChapter] = useState<Pick<BookWithProgress, 'bookId' | 'displayTitle'> | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
   const loadSession = async (nextBookId: string) => {
-    const nextSession = await libraryService.getReaderSession(nextBookId);
-    setSession(nextSession);
-    setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+    try {
+      const nextSession = await withTimeout(
+        libraryService.getReaderSession(nextBookId),
+        READER_SESSION_TIMEOUT_MS,
+        `加载阅读章节超时（>${Math.round(READER_SESSION_TIMEOUT_MS / 1000)} 秒）。`
+      );
+      setSession(nextSession);
+      setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+      setSessionError(null);
+      return nextSession;
+    } catch (error) {
+      setSession(null);
+      setSessionError(error instanceof Error ? error.message : '加载阅读章节失败');
+      return null;
+    } finally {
+      setSessionLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -1019,11 +1052,28 @@ export function ReaderPage() {
         return;
       }
 
-      const nextSession = await libraryService.getReaderSession(bookId);
+      setSessionLoading(true);
+      setSessionError(null);
+      try {
+        const nextSession = await withTimeout(
+          libraryService.getReaderSession(bookId),
+          READER_SESSION_TIMEOUT_MS,
+          `加载阅读章节超时（>${Math.round(READER_SESSION_TIMEOUT_MS / 1000)} 秒）。`
+        );
 
-      if (!cancelled) {
-        setSession(nextSession);
-        setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+        if (!cancelled) {
+          setSession(nextSession);
+          setZoomScale(nextSession?.progress?.zoomScale ?? 1);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSession(null);
+          setSessionError(error instanceof Error ? error.message : '加载阅读章节失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setSessionLoading(false);
+        }
       }
     };
 
@@ -1072,20 +1122,31 @@ export function ReaderPage() {
     let cancelled = false;
 
     const syncReaderState = async () => {
-      const nextSession = await libraryService.getReaderSession(bookId);
-      if (cancelled) {
-        return;
-      }
+      try {
+        const nextSession = await withTimeout(
+          libraryService.getReaderSession(bookId),
+          READER_SESSION_TIMEOUT_MS,
+          `同步阅读状态超时（>${Math.round(READER_SESSION_TIMEOUT_MS / 1000)} 秒）。`
+        );
+        if (cancelled) {
+          return;
+        }
 
-      setSession(nextSession);
+        setSession(nextSession);
+        setSessionError(null);
 
-      if (!chapterSheetOpen || !nextSession?.title?.titleId) {
-        return;
-      }
+        if (!chapterSheetOpen || !nextSession?.title?.titleId) {
+          return;
+        }
 
-      const entries = await libraryService.listTitleChapters(nextSession.title.titleId);
-      if (!cancelled) {
-        setChapterEntries(entries);
+        const entries = await libraryService.listTitleChapters(nextSession.title.titleId);
+        if (!cancelled) {
+          setChapterEntries(entries);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSessionError(error instanceof Error ? error.message : '同步阅读状态失败');
+        }
       }
     };
 
@@ -1265,7 +1326,31 @@ export function ReaderPage() {
   if (!session) {
     return (
       <ReaderStateBlock>
-        <h1>正在准备阅读器...</h1>
+        {sessionLoading ? <h1>正在准备阅读器...</h1> : <h1>无法打开这个章节</h1>}
+        {!sessionLoading ? (
+          <>
+            <p>{sessionError ?? '章节不存在、已被移除，或当前书源暂不可用。'}</p>
+            <div className="button-row">
+              <button
+                className="action-button action-button--primary"
+                onClick={() => {
+                  if (!bookId) {
+                    return;
+                  }
+
+                  setSessionLoading(true);
+                  setSessionError(null);
+                  void loadSession(bookId);
+                }}
+              >
+                重试
+              </button>
+              <Link className="action-button" to="/">
+                返回首页
+              </Link>
+            </div>
+          </>
+        ) : null}
       </ReaderStateBlock>
     );
   }

@@ -8,6 +8,7 @@ export interface BookRecord {
   sourceType: SourceType;
   sourceInstanceId: string;
   sourceKey: string;
+  collectionKey?: string;
   title: string;
   displayTitle: string;
   coverRef?: string | null;

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>连接 PDFreader</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page page--narrow">
+      <section class="hero">
+        <div id="connect-status-pill" class="status-pill is-off">正在读取状态...</div>
+        <h1 id="connect-title">连接 PDFreader</h1>
+        <p class="muted">这页只告诉你一件事：现在下一步该点哪里。</p>
+      </section>
+
+      <div id="connect-notice" class="notice" hidden></div>
+
+      <article class="panel">
+        <h2>现在该做什么</h2>
+        <p id="connect-summary" class="muted" style="margin-top: 14px">正在读取推荐操作...</p>
+        <div class="button-row" style="margin-top: 16px">
+          <button id="connect-primary-button" class="button-primary" hidden>继续</button>
+          <a id="open-app-home" class="button-link secondary" href="#" hidden>打开 PDFreader 首页</a>
+        </div>
+      </article>
+
+      <article class="panel" style="margin-top: 16px">
+        <h2>这台设备怎么连更稳</h2>
+        <div class="chip-row" style="margin-top: 14px">
+          <span id="device-chip" class="meta-chip">正在识别设备...</span>
+          <span id="mode-chip" class="meta-chip">正在识别打开方式...</span>
+        </div>
+        <p id="mobile-summary" class="muted" style="margin-top: 14px">正在生成设备说明...</p>
+        <ol id="mobile-steps" class="step-list" style="margin-top: 14px"></ol>
+      </article>
+
+      <article class="panel" style="margin-top: 16px">
+        <h2>兜底地址</h2>
+        <p class="muted" style="margin-top: 14px">如果上面的按钮没有把你带进 PDFreader，就复制下面这个书源地址。</p>
+        <p id="connect-source-url" class="mono" style="margin-top: 14px"></p>
+        <div class="button-row" style="margin-top: 16px">
+          <button id="copy-source-url" class="secondary">复制书源地址</button>
+        </div>
+      </article>
+    </main>
+    <script type="module" src="/connect.js"></script>
+  </body>
+</html>

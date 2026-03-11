@@ -2,6 +2,7 @@ import { db } from '../db/database';
 import type { SourceInstanceRecord } from '../domain/source';
 import { LOCAL_SOURCE_INSTANCE_ID } from '../sources/localUploadSource';
 import { normalizeRemoteBaseUrl } from '../sources/remoteUrlSource';
+import { createUuid } from '../shared/utils/uuid';
 
 export interface RemoteSourceDraft {
   sourceInstanceId?: string;
@@ -71,7 +72,7 @@ export const sourceService = {
           .filter((source) => source.sourceType === 'remote_url' && source.baseUrl === normalizedBaseUrl)
           .first();
     const existing = existingById ?? existingByBaseUrl;
-    const sourceInstanceId = existing?.sourceInstanceId ?? input.sourceInstanceId ?? `remote-${crypto.randomUUID()}`;
+    const sourceInstanceId = existing?.sourceInstanceId ?? input.sourceInstanceId ?? `remote-${createUuid()}`;
 
     const record = normalizeSource(existing, {
       sourceInstanceId,

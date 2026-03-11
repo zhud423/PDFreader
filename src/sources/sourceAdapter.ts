@@ -37,6 +37,9 @@ export interface SourceCatalogBook {
   contentHash: string;
   title: string;
   displayTitle: string;
+  workKey?: string;
+  workTitle?: string;
+  chapterPath?: string;
   fileName: string;
   fileSize: number;
   mimeType: string;

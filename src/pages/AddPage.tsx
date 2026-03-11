@@ -23,6 +23,24 @@ interface SourceDraft {
 }
 
 type ImportFlowMode = 'new' | 'existing';
+type AddPageTab = 'local' | 'remote';
+const REMOTE_SYNC_TIMEOUT_MS = 20000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 function buildImportFeedback(result: ImportResult): AddPageFeedback {
   const addedCount = result.imported.length;
@@ -58,7 +76,7 @@ function buildRemoteSourceFeedback(result: RemoteSourceSyncResult): AddPageFeedb
   if (result.validation.status !== 'ready') {
     return {
       summary: `${result.source.name} 已保存，但当前不可用`,
-      details: [result.validation.reason ?? '请确认局域网地址、HTTPS 配置和 library.json 是否可访问。'],
+      details: [result.validation.reason ?? '请确认局域网地址、CORS 和 library.json 是否可访问；真机 / PWA 建议使用 HTTPS。'],
       tone: 'warning'
     };
   }
@@ -116,21 +134,30 @@ function SourceCard({ source, syncing, onRefresh }: SourceCardProps) {
 export function AddPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const presetBaseUrl = searchParams.get('baseUrl')?.trim() ?? '';
+  const presetSourceName = searchParams.get('sourceName')?.trim() ?? '';
+  const focusRemote = searchParams.get('focus') === 'remote';
+  const autoRemoteRequested = searchParams.get('auto') === '1' || (focusRemote && Boolean(presetBaseUrl));
   const existingInputRef = useRef<HTMLInputElement | null>(null);
   const newTitleInputRef = useRef<HTMLInputElement | null>(null);
   const titleCoverInputRef = useRef<HTMLInputElement | null>(null);
+  const autoRemoteRunKeyRef = useRef<string | null>(null);
   const pendingImportOptionsRef = useRef<ImportOptions | undefined>(undefined);
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [feedback, setFeedback] = useState<AddPageFeedback | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
-  const [sourceDraft, setSourceDraft] = useState<SourceDraft>({ name: '', baseUrl: '' });
+  const [sourceDraft, setSourceDraft] = useState<SourceDraft>({
+    name: presetSourceName,
+    baseUrl: presetBaseUrl
+  });
   const [lastImportedBookId, setLastImportedBookId] = useState<string | null>(null);
   const [existingTitleId, setExistingTitleId] = useState('');
   const [newTitleName, setNewTitleName] = useState('');
   const [newTitleCoverName, setNewTitleCoverName] = useState('');
   const [newTitleCoverFile, setNewTitleCoverFile] = useState<File | null>(null);
   const [importFlowMode, setImportFlowMode] = useState<ImportFlowMode>('new');
+  const [activeTab, setActiveTab] = useState<AddPageTab>(() => (focusRemote || autoRemoteRequested ? 'remote' : 'local'));
   const canImportAsNewTitle = Boolean(newTitleName.trim() && newTitleCoverFile) && !isImporting;
 
   const loadOverview = async () => {
@@ -158,6 +185,82 @@ export function AddPage() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!presetBaseUrl && !presetSourceName) {
+      return;
+    }
+
+    setSourceDraft((current) => ({
+      name: presetSourceName || current.name,
+      baseUrl: presetBaseUrl || current.baseUrl
+    }));
+  }, [presetBaseUrl, presetSourceName]);
+
+  useEffect(() => {
+    if (focusRemote || autoRemoteRequested) {
+      setActiveTab('remote');
+    }
+  }, [focusRemote, autoRemoteRequested]);
+
+  useEffect(() => {
+    if (!autoRemoteRequested || !presetBaseUrl) {
+      return;
+    }
+
+    const runKey = `${presetBaseUrl}::${presetSourceName}`;
+    if (autoRemoteRunKeyRef.current === runKey) {
+      return;
+    }
+    autoRemoteRunKeyRef.current = runKey;
+
+    let cancelled = false;
+    const runAutoRemoteSync = async () => {
+      setSyncingSourceId('new');
+      setFeedback(null);
+
+      try {
+        const result = await withTimeout(
+          libraryService.syncRemoteUrlSource({
+            name: presetSourceName || '局域网书源',
+            baseUrl: presetBaseUrl
+          }),
+          REMOTE_SYNC_TIMEOUT_MS,
+          `连接书源超时（>${Math.round(REMOTE_SYNC_TIMEOUT_MS / 1000)} 秒）。请检查手机与 Mac 是否同一局域网，并重试。`
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setFeedback(buildRemoteSourceFeedback(result));
+        if (result.validation.status === 'ready') {
+          setSourceDraft({ name: '', baseUrl: '' });
+        }
+        const nextOverview = await libraryService.getHomeOverview();
+        if (!cancelled) {
+          setOverview(nextOverview);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setFeedback({
+          summary: error instanceof Error ? error.message : '自动添加远程书源失败',
+          details: [],
+          tone: 'warning'
+        });
+      } finally {
+        setSyncingSourceId(null);
+      }
+    };
+
+    void runAutoRemoteSync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoRemoteRequested, presetBaseUrl, presetSourceName]);
 
   const handleImport = async (files: FileList | null) => {
     const pickedFiles = Array.from(files ?? []);
@@ -228,7 +331,11 @@ export function AddPage() {
     setFeedback(null);
 
     try {
-      const result = await libraryService.syncRemoteUrlSource(sourceDraft);
+      const result = await withTimeout(
+        libraryService.syncRemoteUrlSource(sourceDraft),
+        REMOTE_SYNC_TIMEOUT_MS,
+        `连接书源超时（>${Math.round(REMOTE_SYNC_TIMEOUT_MS / 1000)} 秒）。请检查网络后重试。`
+      );
       setFeedback(buildRemoteSourceFeedback(result));
       if (result.validation.status === 'ready') {
         setSourceDraft({ name: '', baseUrl: '' });
@@ -250,7 +357,11 @@ export function AddPage() {
     setFeedback(null);
 
     try {
-      const result = await libraryService.refreshRemoteSource(source.sourceInstanceId);
+      const result = await withTimeout(
+        libraryService.refreshRemoteSource(source.sourceInstanceId),
+        REMOTE_SYNC_TIMEOUT_MS,
+        `连接书源超时（>${Math.round(REMOTE_SYNC_TIMEOUT_MS / 1000)} 秒）。请检查网络后重试。`
+      );
       setFeedback(buildRemoteSourceFeedback(result));
     } catch (error) {
       setFeedback({
@@ -265,12 +376,7 @@ export function AddPage() {
 
   const remoteSources = (overview?.sourceSummaries ?? []).filter((source) => source.sourceType === 'remote_url');
   const titleEntries = overview?.titleEntries ?? [];
-  const focusRemote = searchParams.get('focus') === 'remote';
-  const operationLoadingText = isImporting
-    ? '正在加载图书并导入章节（解析 PDF、生成封面、写入书库）...'
-    : syncingSourceId
-      ? '正在连接并同步局域网书源，请稍候...'
-      : null;
+  const localOperationLoadingText = isImporting ? '正在加载图书并导入章节（解析 PDF、生成封面、写入书库）...' : null;
 
   return (
     <main className="app-shell add-shell">
@@ -319,7 +425,31 @@ export function AddPage() {
         </div>
       </section>
 
-      <section className="content-block add-section">
+      <section className="content-block add-tabs-shell">
+        <div className="add-tabs" role="tablist" aria-label="添加来源切换">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'local'}
+            className={`add-tab ${activeTab === 'local' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('local')}
+          >
+            本地书源
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'remote'}
+            className={`add-tab ${activeTab === 'remote' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('remote')}
+          >
+            局域网书源
+          </button>
+        </div>
+      </section>
+
+      {activeTab === 'local' ? (
+        <section className="content-block add-section">
         <div className="section-heading">
           <h2>本地书源导入</h2>
         </div>
@@ -427,8 +557,8 @@ export function AddPage() {
         )}
 
         <div className="operation-feedback-block">
-          {operationLoadingText ? (
-            <p className="inline-message operation-loading-message">{operationLoadingText}</p>
+          {localOperationLoadingText ? (
+            <p className="inline-message operation-loading-message">{localOperationLoadingText}</p>
           ) : null}
 
           {feedback ? (
@@ -441,7 +571,7 @@ export function AddPage() {
                   ))}
                 </ul>
               ) : null}
-              {lastImportedBookId && !operationLoadingText ? (
+              {lastImportedBookId && !localOperationLoadingText ? (
                 <div className="button-row">
                   <button
                     className="action-button action-button--primary"
@@ -457,14 +587,21 @@ export function AddPage() {
           )}
         </div>
       </section>
+      ) : null}
 
-      <section className={`content-block add-section ${focusRemote ? 'is-highlighted' : ''}`}>
+      {activeTab === 'remote' ? (
+        <section className={`content-block add-section ${focusRemote ? 'is-highlighted' : ''}`}>
         <div className="section-heading">
           <h2>局域网书源</h2>
           <span>静态 library.json 协议</span>
         </div>
 
         <div className="source-form">
+          {presetBaseUrl ? (
+            <p className="inline-message">
+              已从 helper 预填书源地址，可直接点击“保存并同步”。
+            </p>
+          ) : null}
           <label className="field">
             <span>名称</span>
             <input
@@ -496,6 +633,21 @@ export function AddPage() {
           </button>
         </div>
 
+        <div className="operation-feedback-block">
+          {!syncingSourceId && feedback ? (
+            <div className={`feedback-panel ${feedback.tone === 'warning' ? 'is-warning' : ''}`}>
+              <p>{feedback.summary}</p>
+              {feedback.details.length > 0 ? (
+                <ul className="feedback-panel__list">
+                  {feedback.details.map((detail) => (
+                    <li key={detail}>{detail}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
         {remoteSources.length > 0 ? (
           <div className="source-grid">
             {remoteSources.map((source) => (
@@ -510,10 +662,11 @@ export function AddPage() {
         ) : (
           <article className="empty-panel">
             <h3>还没有局域网书源</h3>
-            <p>先添加一个可访问的 HTTPS 目录，后续这里会继续承接来源管理与同步。</p>
+            <p>先添加一个可访问的目录 URL。桌面调试可先用 HTTP，真机或 PWA 建议 HTTPS。</p>
           </article>
         )}
       </section>
+      ) : null}
     </main>
   );
 }

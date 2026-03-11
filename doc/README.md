@@ -15,6 +15,7 @@
 - `09_p1_verification_log.md`：P1 本机验证结果与真机待验项目
 - `10_p2_beta_runbook.md`：P2 公开测试版的环境要求、回归路径与已知限制
 - `11_p3_library_design.md`：P3 书库首页、上传页与阅读页菜单重构设计
+- `12_mac_helper_design.md`：面向普通用户的 Mac helper companion 方案与分阶段落地
 
 后续建议追加的文档：
 
