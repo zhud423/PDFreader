@@ -9,7 +9,7 @@ import { HelperStateStore } from './stateStore.ts';
 import { syncCoverCache } from './coverCache.ts';
 import type { FolderRecord, HelperSnapshot, HelperState, LibraryEntryRecord } from './types.ts';
 
-const DEFAULT_PDFREADER_APP_BASE_URL = 'https://pdfreader.gensstudio.com';
+const DEFAULT_PDFREADER_APP_BASE_URL = 'http://pdfreader.gensstudio.com';
 
 interface HelperTlsStatus {
   enabled: boolean;
@@ -61,6 +61,27 @@ function inferDefaultAppBaseUrl(lan: ReturnType<typeof listLanUrls>): string | u
   }
 
   return `http://${primaryLan.address}:${appPort}`;
+}
+
+function extractUrlProtocol(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value).protocol;
+  } catch {
+    return null;
+  }
+}
+
+function canBuildAppAddUrl(appBaseUrl: string, sourceBaseUrl: string): boolean {
+  const appProtocol = extractUrlProtocol(appBaseUrl);
+  const sourceProtocol = extractUrlProtocol(sourceBaseUrl);
+  if (appProtocol === 'https:' && sourceProtocol === 'http:') {
+    return false;
+  }
+  return true;
 }
 
 function trimPdfExt(fileName: string): string {
@@ -145,7 +166,7 @@ export class HelperService {
     const connectUrl = connectUrlHttp;
     const effectiveAppBaseUrl = inferDefaultAppBaseUrl(lanHttps.length > 0 ? lanHttps : lanHttp) ?? state.appBaseUrl;
     let addRemoteUrl: string | undefined;
-    if (effectiveAppBaseUrl) {
+    if (effectiveAppBaseUrl && canBuildAppAddUrl(effectiveAppBaseUrl, sourceBaseUrl)) {
       try {
         addRemoteUrl = this.buildAppAddUrl(effectiveAppBaseUrl, sourceBaseUrl, state.sourceName);
       } catch {
