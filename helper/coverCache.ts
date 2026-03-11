@@ -3,12 +3,13 @@ import { spawn } from 'node:child_process';
 import { access, mkdir, readdir, rename, rm } from 'node:fs/promises';
 import type { LibraryEntryRecord } from './types.ts';
 
-const QUICKLOOK_MAX_EDGE = 1024;
-const COVER_TARGET_WIDTH = 540;
-const COVER_TARGET_HEIGHT = 720;
-const MIN_ACCEPTABLE_COVER_WIDTH = 180;
+const QUICKLOOK_MAX_EDGE = 1600;
+const COVER_TARGET_WIDTH = 720;
+const COVER_TARGET_HEIGHT = 960;
+const MIN_ACCEPTABLE_COVER_WIDTH = 320;
 const LONG_PAGE_RATIO_THRESHOLD = 2;
-const COVER_PIPELINE_VERSION = 2;
+const ALWAYS_USE_HI_RES_COVER = true;
+const COVER_PIPELINE_VERSION = 3;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -133,7 +134,7 @@ export async function syncCoverCache(
 
     try {
       const pageRatio = entry.firstPageHeight / Math.max(1, entry.firstPageWidth);
-      const forceHiRes = pageRatio >= LONG_PAGE_RATIO_THRESHOLD;
+      const forceHiRes = ALWAYS_USE_HI_RES_COVER || pageRatio >= LONG_PAGE_RATIO_THRESHOLD;
       let tempOutputPath: string;
 
       if (forceHiRes) {

@@ -399,7 +399,9 @@ export class HelperService {
           firstPageWidth: entry.firstPageWidth,
           firstPageHeight: entry.firstPageHeight,
           pdfPath: `./books/${entry.id}.pdf`,
-          coverPath: entry.coverAssetName ? `./covers/${entry.coverAssetName}` : undefined,
+          coverPath: entry.coverAssetName
+            ? `./covers/${entry.coverAssetName}?v=${encodeURIComponent(entry.coverGeneratedAt ?? entry.modifiedAt)}`
+            : undefined,
           workKey: derived.workKey,
           workTitle: derived.workTitle,
           chapterPath: derived.chapterPath,

@@ -379,6 +379,10 @@ async function start(): Promise<void> {
   }
 
   await refreshWatchers();
+  const initialState = await service.getState();
+  if (initialState.sharingEnabled) {
+    await service.rescan();
+  }
 
   const server = createHttpServer((request, response) => {
     void requestHandler(request, response);

@@ -717,11 +717,11 @@ a {
 
 .bottom-sheet {
   width: min(720px, 100%);
-  max-height: min(82vh, 820px);
-  display: grid;
-  gap: 16px;
+  max-height: min(80vh, 820px);
+  display: flex;
+  flex-direction: column;
   padding: 20px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .bottom-sheet--half {
@@ -730,7 +730,7 @@ a {
 
 .bottom-sheet--half-wide {
   width: min(1180px, calc(100vw - 16px));
-  max-height: min(86vh, 912px);
+  max-height: min(80vh, 820px);
 }
 
 .bottom-sheet__grabber {
@@ -746,6 +746,7 @@ a {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+  flex: 0 0 auto;
 }
 
 .bottom-sheet__header h2 {
@@ -763,6 +764,12 @@ a {
 .chapter-list {
   display: grid;
   gap: 12px;
+}
+
+.bottom-sheet__content {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .sheet-action {
@@ -1489,7 +1496,7 @@ a {
 
   .bottom-sheet--half-wide {
     width: calc(100vw - 10px);
-    max-height: min(94vh, 864px);
+    max-height: 80vh;
   }
 
   .chapter-row__cover {
