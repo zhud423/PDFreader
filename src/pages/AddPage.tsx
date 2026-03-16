@@ -177,7 +177,7 @@ export function AddPage() {
   const [newTitleCoverFile, setNewTitleCoverFile] = useState<File | null>(null);
   const [importFlowMode, setImportFlowMode] = useState<ImportFlowMode>('new');
   const [activeTab, setActiveTab] = useState<AddPageTab>(() => (focusRemote || autoRemoteRequested ? 'remote' : 'local'));
-  const canImportAsNewTitle = Boolean(newTitleName.trim() && newTitleCoverFile) && !isImporting;
+  const canImportAsNewTitle = Boolean(newTitleName.trim()) && !isImporting;
 
   const loadOverview = async () => {
     const next = await libraryService.getHomeOverview();
@@ -334,10 +334,10 @@ export function AddPage() {
       return;
     }
 
-    if (!newTitleName.trim() || !newTitleCoverFile) {
+    if (!newTitleName.trim()) {
       setFeedback({
-        summary: '请先填写作品名并选择作品封面',
-        details: ['再选择多个 PDF 创建新作品。'],
+        summary: '请先填写作品名',
+        details: ['封面可选，填写作品名后即可选择多个 PDF 创建新作品。'],
         tone: 'warning'
       });
       return;
@@ -546,7 +546,7 @@ export function AddPage() {
                 />
               </label>
               <div className="local-import-action-row">
-                <span>作品封面</span>
+                <span>作品封面（选填）</span>
                 <button
                   className="action-button local-action-button"
                   onClick={() => titleCoverInputRef.current?.click()}

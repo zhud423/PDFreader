@@ -49,7 +49,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function computeSegmentTargetHeight(viewportHeight: number): number {
-  return clamp(viewportHeight * 1.35, 720, 1400);
+  return Math.round(clamp(viewportHeight * 1.35, 720, 1400));
 }
 
 function getSegmentAtOffset(layout: ReaderLayout, offset: number): ReaderSegment | null {

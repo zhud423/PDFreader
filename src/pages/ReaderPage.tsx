@@ -36,15 +36,13 @@ const READER_SESSION_TIMEOUT_MS = 20000;
 interface ReaderSettings {
   tapStepEnabled: boolean;
   tapStepRatio: number;
-  showPageSeparators: boolean;
 }
 
 function loadReaderSettings(): ReaderSettings {
   if (typeof window === 'undefined') {
     return {
       tapStepEnabled: true,
-      tapStepRatio: 0.9,
-      showPageSeparators: true
+      tapStepRatio: 0.9
     };
   }
 
@@ -53,22 +51,19 @@ function loadReaderSettings(): ReaderSettings {
     if (!raw) {
       return {
         tapStepEnabled: true,
-        tapStepRatio: 0.9,
-        showPageSeparators: true
+        tapStepRatio: 0.9
       };
     }
 
     const parsed = JSON.parse(raw) as Partial<ReaderSettings>;
     return {
       tapStepEnabled: parsed.tapStepEnabled ?? true,
-      tapStepRatio: parsed.tapStepRatio ?? 0.9,
-      showPageSeparators: parsed.showPageSeparators ?? true
+      tapStepRatio: parsed.tapStepRatio ?? 0.9
     };
   } catch {
     return {
       tapStepEnabled: true,
-      tapStepRatio: 0.9,
-      showPageSeparators: true
+      tapStepRatio: 0.9
     };
   }
 }
@@ -93,7 +88,6 @@ interface RenderedSegmentProps {
   pdf: PDFDocumentProxy;
   segment: ReaderSegment;
   renderMode: ReaderSegmentRenderMode;
-  showPageSeparators: boolean;
   reportRenderedRef: MutableRefObject<(report: RenderReport) => void>;
 }
 
@@ -119,7 +113,6 @@ function RenderedSegment({
   pdf,
   segment,
   renderMode,
-  showPageSeparators,
   reportRenderedRef
 }: RenderedSegmentProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -176,10 +169,11 @@ function RenderedSegment({
 
           const viewport = page.getViewport({ scale: segment.scale * qualityScale });
           const translateY = Math.round(segment.offsetY * qualityScale);
+          const segmentBottom = Math.round((segment.offsetY + segment.height) * qualityScale);
           canvas.width = Math.max(1, Math.round(segment.width * qualityScale));
-          canvas.height = Math.max(1, Math.round(segment.height * qualityScale));
-          canvas.style.width = `${Math.round(segment.width)}px`;
-          canvas.style.height = `${Math.round(segment.height)}px`;
+          canvas.height = Math.max(1, segmentBottom - translateY);
+          canvas.style.width = `${segment.width}px`;
+          canvas.style.height = `${segment.height}px`;
 
           const context = canvas.getContext('2d');
           if (!context) {
@@ -252,10 +246,7 @@ function RenderedSegment({
   const shouldKeepCanvas = renderMode !== 'cold';
 
   return (
-    <section
-      className={`reader-segment-shell ${showPageSeparators && segment.pageNumber > 1 && segment.segmentIndex === 0 ? 'is-page-start' : ''}`}
-      style={{ height: `${segment.height + segment.gapBefore}px`, paddingTop: `${segment.gapBefore}px` }}
-    >
+    <section className="reader-segment-shell" style={{ height: `${segment.height + segment.gapBefore}px`, paddingTop: `${segment.gapBefore}px` }}>
       <div className="reader-segment-frame" style={{ width: `${segment.width}px`, height: `${segment.height}px` }}>
         {shouldKeepCanvas && renderState !== 'ready' ? (
           <div className={`reader-segment-placeholder ${renderState === 'loading' ? 'is-loading' : ''}`} />
@@ -857,7 +848,6 @@ function ReaderViewport({
                 pdf={pdf}
                 segment={segment}
                 renderMode={renderWindow ? getSegmentRenderMode(renderWindow, segment.order) : 'cold'}
-                showPageSeparators={settings.showPageSeparators}
                 reportRenderedRef={reportRenderedRef}
               />
             ))}
@@ -925,19 +915,6 @@ function ReaderViewport({
               onChange={(event) => onSettingsChange({ tapStepRatio: Number(event.target.value) })}
             />
           </label>
-
-          <div className="reader-settings-panel__row">
-            <div>
-              <strong>页面分隔细线</strong>
-              <p className="muted-text">连续画面默认只保留极淡细线。</p>
-            </div>
-            <button
-              className={`toggle-pill ${settings.showPageSeparators ? 'is-active' : ''}`}
-              onClick={() => onSettingsChange({ showPageSeparators: !settings.showPageSeparators })}
-            >
-              {settings.showPageSeparators ? '显示' : '隐藏'}
-            </button>
-          </div>
 
           <p className="reader-settings-panel__meta">
             热区 {hotCount} 段 · 温区 {warmCount} 段 · 当前段 {currentSegment} ·{' '}

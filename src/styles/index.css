@@ -1202,10 +1202,6 @@ a {
   box-shadow: none;
 }
 
-.reader-segment-shell.is-page-start .reader-segment-frame {
-  border-top: 1px solid rgba(255, 248, 238, 0.08);
-}
-
 .reader-segment-placeholder {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
